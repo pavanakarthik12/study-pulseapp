@@ -16,14 +16,31 @@ class AuthService {
     return AppUser.fromFirebaseUser(user);
   }
 
+  Future<User?> signUp(String email, String password) async {
+    final result = await _firebaseAuth.createUserWithEmailAndPassword(
+      email: email.trim(),
+      password: password,
+    );
+    return result.user;
+  }
+
+  Future<User?> login(String email, String password) async {
+    final result = await _firebaseAuth.signInWithEmailAndPassword(
+      email: email.trim(),
+      password: password,
+    );
+    return result.user;
+  }
+
+  Future<void> logout() async {
+    await _firebaseAuth.signOut();
+  }
+
   Future<void> signInWithEmailAndPassword({
     required String email,
     required String password,
   }) async {
-    await _firebaseAuth.signInWithEmailAndPassword(
-      email: email.trim(),
-      password: password,
-    );
+    await login(email, password);
   }
 
   Future<void> signUpWithEmailAndPassword({
@@ -31,19 +48,16 @@ class AuthService {
     required String password,
     String? name,
   }) async {
-    final credential = await _firebaseAuth.createUserWithEmailAndPassword(
-      email: email.trim(),
-      password: password,
-    );
+    final user = await signUp(email, password);
 
     final trimmedName = name?.trim();
     if (trimmedName != null && trimmedName.isNotEmpty) {
-      await credential.user?.updateDisplayName(trimmedName);
-      await credential.user?.reload();
+      await user?.updateDisplayName(trimmedName);
+      await user?.reload();
     }
   }
 
   Future<void> signOut() async {
-    await _firebaseAuth.signOut();
+    await logout();
   }
 }
