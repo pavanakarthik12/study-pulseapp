@@ -1,10 +1,19 @@
 import 'dart:async';
+import 'dart:ui';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
+import 'package:just_audio/just_audio.dart';
 import 'package:percent_indicator/circular_percent_indicator.dart';
 
 import 'widgets/ui_shell.dart';
+
+class _FocusStream {
+  const _FocusStream({required this.name, required this.url});
+
+  final String name;
+  final String url;
+}
 
 class StudyTimerScreen extends StatefulWidget {
   const StudyTimerScreen({super.key});
@@ -15,24 +24,63 @@ class StudyTimerScreen extends StatefulWidget {
 
 class _StudyTimerScreenState extends State<StudyTimerScreen> {
   static const int _defaultSeconds = 25 * 60;
+  static const List<_FocusStream> _streams = [
+    _FocusStream(
+      name: 'Lo-fi Focus',
+      url: 'https://play.streamafrica.net/lofiradio',
+    ),
+    _FocusStream(
+      name: 'Rain Focus',
+      url: 'https://play.streamafrica.net/rainradio',
+    ),
+    _FocusStream(
+      name: 'Ambient Focus',
+      url: 'https://stream-154.zeno.fm/f3ffx47z5f8uv',
+    ),
+  ];
 
   Timer? _timer;
+  final AudioPlayer _audioPlayer = AudioPlayer();
   int _remainingSeconds = _defaultSeconds;
+  int _currentStreamIndex = 0;
   bool _isRunning = false;
+  bool _isAudioPlaying = false;
+  StreamSubscription<PlayerState>? _playerStateSub;
+
+  _FocusStream get _currentStream => _streams[_currentStreamIndex];
+
+  String get _nowPlayingLabel => 'Now Playing: ${_currentStream.name}';
+
+  @override
+  void initState() {
+    super.initState();
+    _playerStateSub = _audioPlayer.playerStateStream.listen((state) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _isAudioPlaying = state.playing;
+      });
+    });
+  }
 
   @override
   void dispose() {
     _timer?.cancel();
+    _playerStateSub?.cancel();
+    _audioPlayer.dispose();
     super.dispose();
   }
 
-  void _start() {
+  Future<void> _start() async {
     if (_isRunning) {
       return;
     }
     setState(() {
       _isRunning = true;
     });
+
+    await _playCurrentStream();
 
     _timer = Timer.periodic(const Duration(seconds: 1), (timer) {
       if (_remainingSeconds <= 1) {
@@ -41,6 +89,7 @@ class _StudyTimerScreenState extends State<StudyTimerScreen> {
           _remainingSeconds = 0;
           _isRunning = false;
         });
+        _audioPlayer.pause();
         return;
       }
 
@@ -55,6 +104,7 @@ class _StudyTimerScreenState extends State<StudyTimerScreen> {
     setState(() {
       _isRunning = false;
     });
+    _audioPlayer.pause();
   }
 
   void _stop() {
@@ -63,6 +113,47 @@ class _StudyTimerScreenState extends State<StudyTimerScreen> {
       _isRunning = false;
       _remainingSeconds = _defaultSeconds;
     });
+    _audioPlayer.pause();
+    _audioPlayer.seek(Duration.zero);
+  }
+
+  Future<void> _playCurrentStream() async {
+    try {
+      final currentUrl = _audioPlayer.audioSource is UriAudioSource
+          ? (_audioPlayer.audioSource as UriAudioSource).uri.toString()
+          : null;
+
+      if (currentUrl != _currentStream.url) {
+        await _audioPlayer.setUrl(_currentStream.url);
+      }
+      await _audioPlayer.play();
+    } catch (_) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Could not play stream right now.')),
+      );
+    }
+  }
+
+  Future<void> _toggleAudio() async {
+    if (_isAudioPlaying) {
+      await _audioPlayer.pause();
+      return;
+    }
+    await _playCurrentStream();
+  }
+
+  Future<void> _switchStream() async {
+    final shouldKeepPlaying = _isAudioPlaying || _isRunning;
+    setState(() {
+      _currentStreamIndex = (_currentStreamIndex + 1) % _streams.length;
+    });
+
+    if (shouldKeepPlaying) {
+      await _playCurrentStream();
+    }
   }
 
   String get _timeText {
@@ -84,95 +175,228 @@ class _StudyTimerScreenState extends State<StudyTimerScreen> {
     return Scaffold(
       body: GradientBackdrop(
         child: SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.all(24),
-            child: Column(
-              children: [
-                Align(
-                  alignment: Alignment.centerLeft,
-                  child: IconButton(
-                    onPressed: () => Navigator.of(context).pop(),
-                    icon: const Icon(Icons.arrow_back),
-                    tooltip: 'Back',
-                  ),
-                ),
-                const Spacer(),
-                Container(
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    boxShadow: [
-                      BoxShadow(
-                        color: const Color(0xFF7C9BFF).withValues(alpha: 0.35),
-                        blurRadius: 42,
-                        spreadRadius: 10,
+          child: Stack(
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(24, 24, 24, 170),
+                child: Column(
+                  children: [
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: IconButton(
+                        onPressed: () => Navigator.of(context).pop(),
+                        icon: const Icon(Icons.arrow_back),
+                        tooltip: 'Back',
                       ),
-                    ],
-                  ),
-                  child: CircularPercentIndicator(
-                    radius: 140,
-                    lineWidth: 14,
-                    animation: true,
-                    animateFromLastPercent: true,
-                    animationDuration: 900,
-                    circularStrokeCap: CircularStrokeCap.round,
-                    percent: _progress,
-                    backgroundColor: Colors.white.withValues(alpha: 0.1),
-                    progressColor: const Color(0xFF7C9BFF),
-                    center: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text(
-                          _timeText,
-                          style:
-                              Theme.of(context).textTheme.displaySmall?.copyWith(
-                                    fontWeight: FontWeight.w700,
+                    ),
+                    const Spacer(),
+                    Container(
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        boxShadow: [
+                          BoxShadow(
+                            color:
+                                const Color(0xFF7C9BFF).withValues(alpha: 0.35),
+                            blurRadius: 42,
+                            spreadRadius: 10,
+                          ),
+                        ],
+                      ),
+                      child: CircularPercentIndicator(
+                        radius: 140,
+                        lineWidth: 14,
+                        animation: true,
+                        animateFromLastPercent: true,
+                        animationDuration: 900,
+                        circularStrokeCap: CircularStrokeCap.round,
+                        percent: _progress,
+                        backgroundColor: Colors.white.withValues(alpha: 0.1),
+                        progressColor: const Color(0xFF7C9BFF),
+                        center: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              _timeText,
+                              style: Theme.of(context)
+                                  .textTheme
+                                  .displaySmall
+                                  ?.copyWith(fontWeight: FontWeight.w700),
+                            ),
+                            const SizedBox(height: 6),
+                            Text(
+                              isFinished ? 'Session complete' : 'Focus timer',
+                              style: Theme.of(context)
+                                  .textTheme
+                                  .bodyMedium
+                                  ?.copyWith(
+                                    color: Colors.white.withValues(alpha: 0.75),
                                   ),
+                            ),
+                          ],
                         ),
-                        const SizedBox(height: 6),
-                        Text(
-                          isFinished ? 'Session complete' : 'Focus timer',
-                          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                                color: Colors.white.withValues(alpha: 0.75),
-                              ),
+                      ),
+                    )
+                        .animate()
+                        .fade(duration: 500.ms)
+                        .scale(
+                          begin: const Offset(0.92, 0.92),
+                          duration: 500.ms,
+                        ),
+                    const SizedBox(height: 40),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        if (_isRunning)
+                          _TimerActionButton(
+                            icon: Icons.pause_rounded,
+                            label: 'Pause',
+                            onTap: _pause,
+                          )
+                        else
+                          _TimerActionButton(
+                            icon: Icons.play_arrow_rounded,
+                            label: isFresh ? 'Start' : 'Resume',
+                            onTap: _start,
+                          ),
+                        const SizedBox(width: 14),
+                        _TimerActionButton(
+                          icon: Icons.stop_rounded,
+                          label: 'Stop',
+                          onTap: _stop,
                         ),
                       ],
-                    ),
-                  ),
-                )
-                    .animate()
-                    .fade(duration: 500.ms)
-                    .scale(begin: const Offset(0.92, 0.92), duration: 500.ms),
-                const SizedBox(height: 40),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    if (_isRunning)
-                      _TimerActionButton(
-                        icon: Icons.pause_rounded,
-                        label: 'Pause',
-                        onTap: _pause,
-                      )
-                    else
-                      _TimerActionButton(
-                        icon: Icons.play_arrow_rounded,
-                        label: isFresh ? 'Start' : 'Resume',
-                        onTap: _start,
-                      ),
-                    const SizedBox(width: 14),
-                    _TimerActionButton(
-                      icon: Icons.stop_rounded,
-                      label: 'Stop',
-                      onTap: _stop,
-                    ),
+                    )
+                        .animate(delay: 120.ms)
+                        .fade(duration: 500.ms)
+                        .slideY(begin: 0.15, end: 0, duration: 500.ms),
+                    const Spacer(flex: 2),
                   ],
-                )
-                    .animate(delay: 120.ms)
-                    .fade(duration: 500.ms)
-                    .slideY(begin: 0.15, end: 0, duration: 500.ms),
-                const Spacer(flex: 2),
-              ],
+                ),
+              ),
+              Positioned(
+                left: 18,
+                right: 18,
+                bottom: 18,
+                child: _FocusRadioCard(
+                  nowPlaying: _nowPlayingLabel,
+                  isPlaying: _isAudioPlaying,
+                  onTogglePlay: _toggleAudio,
+                  onSwitchStream: _switchStream,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _FocusRadioCard extends StatelessWidget {
+  const _FocusRadioCard({
+    required this.nowPlaying,
+    required this.isPlaying,
+    required this.onTogglePlay,
+    required this.onSwitchStream,
+  });
+
+  final String nowPlaying;
+  final bool isPlaying;
+  final VoidCallback onTogglePlay;
+  final VoidCallback onSwitchStream;
+
+  @override
+  Widget build(BuildContext context) {
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(18),
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 280),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(18),
+            color: Colors.white.withValues(alpha: 0.12),
+            border: Border.all(
+              color: Colors.white.withValues(alpha: 0.24),
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: const Color(0xFF57D2FF)
+                    .withValues(alpha: isPlaying ? 0.28 : 0.08),
+                blurRadius: isPlaying ? 24 : 8,
+                spreadRadius: isPlaying ? 2 : 0,
+              ),
+            ],
+          ),
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  nowPlaying,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+              ),
+              const SizedBox(width: 10),
+              _MiniActionButton(
+                icon: isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded,
+                onTap: onTogglePlay,
+              ),
+              const SizedBox(width: 10),
+              _MiniActionButton(
+                icon: Icons.swap_horiz_rounded,
+                onTap: onSwitchStream,
+              ),
+            ],
+          ),
+        )
+            .animate(target: isPlaying ? 1 : 0)
+            .scale(
+              begin: const Offset(0.99, 0.99),
+              end: const Offset(1.0, 1.0),
+              duration: 260.ms,
+            ),
+      ),
+    );
+  }
+}
+
+class _MiniActionButton extends StatefulWidget {
+  const _MiniActionButton({required this.icon, required this.onTap});
+
+  final IconData icon;
+  final VoidCallback onTap;
+
+  @override
+  State<_MiniActionButton> createState() => _MiniActionButtonState();
+}
+
+class _MiniActionButtonState extends State<_MiniActionButton> {
+  bool _pressed = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTapDown: (_) => setState(() => _pressed = true),
+      onTapCancel: () => setState(() => _pressed = false),
+      onTapUp: (_) => setState(() => _pressed = false),
+      onTap: widget.onTap,
+      child: AnimatedScale(
+        duration: const Duration(milliseconds: 140),
+        scale: _pressed ? 0.9 : 1,
+        child: Container(
+          height: 40,
+          width: 40,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(12),
+            color: Colors.white.withValues(alpha: 0.12),
+            border: Border.all(
+              color: Colors.white.withValues(alpha: 0.2),
             ),
           ),
+          child: Icon(widget.icon, size: 22),
         ),
       ),
     );
