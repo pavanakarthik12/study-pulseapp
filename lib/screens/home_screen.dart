@@ -2,6 +2,7 @@ import 'package:flutter_animate/flutter_animate.dart';
 import 'package:flutter/material.dart';
 
 import '../services/auth_service.dart';
+import 'study_timer_screen.dart';
 import 'widgets/ui_shell.dart';
 
 class HomeScreen extends StatelessWidget {
@@ -59,8 +60,10 @@ class HomeScreen extends StatelessWidget {
                   child: GradientActionButton(
                     label: 'Start Smart Session',
                     onPressed: () {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text('Smart Session started!')),
+                      Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (_) => const StudyTimerScreen(),
+                        ),
                       );
                     },
                   ),
