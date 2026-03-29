@@ -1,4 +1,4 @@
-package com.example.study_pulse
+package com.pavan.studypulse
 
 import io.flutter.embedding.android.FlutterActivity
 
