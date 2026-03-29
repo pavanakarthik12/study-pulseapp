@@ -1,6 +1,8 @@
 import 'dart:async';
+import 'dart:math' as math;
 import 'dart:ui';
 
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:just_audio/just_audio.dart';
@@ -22,7 +24,8 @@ class StudyTimerScreen extends StatefulWidget {
   State<StudyTimerScreen> createState() => _StudyTimerScreenState();
 }
 
-class _StudyTimerScreenState extends State<StudyTimerScreen> {
+class _StudyTimerScreenState extends State<StudyTimerScreen>
+  with WidgetsBindingObserver {
   static const int _defaultSeconds = 25 * 60;
   static const List<_FocusStream> _streams = [
     _FocusStream(
@@ -43,11 +46,18 @@ class _StudyTimerScreenState extends State<StudyTimerScreen> {
 
   Timer? _timer;
   final AudioPlayer _audioPlayer = AudioPlayer();
+  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  final TextEditingController _subjectController = TextEditingController();
   int _remainingSeconds = _defaultSeconds;
   int _currentStreamIndex = 0;
   bool _isRunning = false;
   bool _isAudioPlaying = false;
   bool _isSwitchingStream = false;
+  bool _hasSessionStarted = false;
+  bool _isSavingSession = false;
+  DateTime? _sessionStartedAt;
+  DateTime? _backgroundedAt;
+  Duration _distractionDuration = Duration.zero;
   StreamSubscription<PlayerState>? _playerStateSub;
 
   _FocusStream get _currentStream => _streams[_currentStreamIndex];
@@ -57,6 +67,7 @@ class _StudyTimerScreenState extends State<StudyTimerScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _playerStateSub = _audioPlayer.playerStateStream.listen((state) {
       if (!mounted) {
         return;
@@ -74,16 +85,41 @@ class _StudyTimerScreenState extends State<StudyTimerScreen> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _timer?.cancel();
     _playerStateSub?.cancel();
+    _subjectController.dispose();
     _audioPlayer.dispose();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (!_hasSessionStarted || _remainingSeconds == 0) {
+      return;
+    }
+
+    if (state == AppLifecycleState.inactive ||
+        state == AppLifecycleState.paused ||
+        state == AppLifecycleState.hidden) {
+      _backgroundedAt ??= DateTime.now();
+      return;
+    }
+
+    if (state == AppLifecycleState.resumed && _backgroundedAt != null) {
+      _distractionDuration += DateTime.now().difference(_backgroundedAt!);
+      _backgroundedAt = null;
+    }
   }
 
   Future<void> _start() async {
     if (_isRunning) {
       return;
     }
+
+    _sessionStartedAt ??= DateTime.now();
+    _hasSessionStarted = true;
+
     setState(() {
       _isRunning = true;
     });
@@ -98,6 +134,7 @@ class _StudyTimerScreenState extends State<StudyTimerScreen> {
           _isRunning = false;
         });
         _audioPlayer.pause();
+        unawaited(_finishSession());
         return;
       }
 
@@ -123,6 +160,111 @@ class _StudyTimerScreenState extends State<StudyTimerScreen> {
     });
     _audioPlayer.pause();
     _audioPlayer.seek(Duration.zero);
+    _resetSessionTracking();
+  }
+
+  Future<void> _finishSession() async {
+    final startedAt = _sessionStartedAt;
+    if (startedAt == null) {
+      return;
+    }
+
+    if (_backgroundedAt != null) {
+      _distractionDuration += DateTime.now().difference(_backgroundedAt!);
+      _backgroundedAt = null;
+    }
+
+    final totalSeconds = math.max(
+      DateTime.now().difference(startedAt).inSeconds,
+      1,
+    );
+    final distractionSeconds = math.max(_distractionDuration.inSeconds, 0);
+    final focusedSeconds = math.max(totalSeconds - distractionSeconds, 0);
+    final focusScore = (focusedSeconds / totalSeconds) * 100;
+
+    await _saveSessionToFirestore(
+      sessionDurationSeconds: totalSeconds,
+      focusScore: focusScore,
+      distractionSeconds: distractionSeconds,
+      subject: _normalizedSubject,
+    );
+
+    if (!mounted) {
+      return;
+    }
+
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: true,
+      builder: (dialogContext) {
+        return _FocusScoreDialog(
+          focusScore: focusScore,
+          focusedSeconds: focusedSeconds,
+          totalSeconds: totalSeconds,
+        );
+      },
+    );
+
+    _resetSessionTracking();
+    if (mounted) {
+      setState(() {
+        _remainingSeconds = _defaultSeconds;
+      });
+    }
+  }
+
+  Future<void> _saveSessionToFirestore({
+    required int sessionDurationSeconds,
+    required int distractionSeconds,
+    required double focusScore,
+    String? subject,
+  }) async {
+    if (_isSavingSession) {
+      return;
+    }
+
+    _isSavingSession = true;
+    try {
+      final payload = <String, dynamic>{
+        'session_duration': sessionDurationSeconds,
+        'focus_score': focusScore,
+        'timestamp': FieldValue.serverTimestamp(),
+      };
+
+      if (subject != null && subject.isNotEmpty) {
+        payload['subject'] = subject;
+      }
+
+      // Extra behavioral signal for future ML features.
+      payload['distraction_duration'] = distractionSeconds;
+
+      await _firestore.collection('focus_sessions').add(payload);
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Session saved locally in app state only.'),
+          ),
+        );
+      }
+    } finally {
+      _isSavingSession = false;
+    }
+  }
+
+  void _resetSessionTracking() {
+    _hasSessionStarted = false;
+    _sessionStartedAt = null;
+    _backgroundedAt = null;
+    _distractionDuration = Duration.zero;
+  }
+
+  String? get _normalizedSubject {
+    final value = _subjectController.text.trim();
+    if (value.isEmpty) {
+      return null;
+    }
+    return value;
   }
 
   Future<void> _playCurrentStream() async {
@@ -269,6 +411,20 @@ class _StudyTimerScreenState extends State<StudyTimerScreen> {
                           duration: 500.ms,
                         ),
                     const SizedBox(height: 40),
+                    ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 360),
+                      child: TextField(
+                        controller: _subjectController,
+                        decoration: const InputDecoration(
+                          hintText: 'Subject (optional)',
+                          prefixIcon: Icon(Icons.menu_book_rounded),
+                        ),
+                      ),
+                    )
+                        .animate(delay: 80.ms)
+                        .fade(duration: 420.ms)
+                        .slideY(begin: 0.12, end: 0, duration: 420.ms),
+                    const SizedBox(height: 18),
                     Row(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
@@ -509,6 +665,117 @@ class _TimerActionButtonState extends State<_TimerActionButton> {
               const SizedBox(width: 8),
               Text(widget.label),
             ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _FocusScoreDialog extends StatelessWidget {
+  const _FocusScoreDialog({
+    required this.focusScore,
+    required this.focusedSeconds,
+    required this.totalSeconds,
+  });
+
+  final double focusScore;
+  final int focusedSeconds;
+  final int totalSeconds;
+
+  Color get _scoreColor {
+    if (focusScore >= 75) {
+      return const Color(0xFF4BD37B);
+    }
+    if (focusScore >= 45) {
+      return const Color(0xFFF2C94C);
+    }
+    return const Color(0xFFFF6B6B);
+  }
+
+  String get _message {
+    if (focusScore >= 85) {
+      return 'Excellent focus. Keep this rhythm going.';
+    }
+    if (focusScore >= 65) {
+      return 'Strong session. Small gains will push you higher.';
+    }
+    if (focusScore >= 45) {
+      return 'Decent effort. Try reducing interruptions next round.';
+    }
+    return 'You showed up. Reset and come back stronger.';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final percent = (focusScore / 100).clamp(0.0, 1.0);
+
+    return Dialog(
+      backgroundColor: Colors.transparent,
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(22),
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
+          child: Container(
+            padding: const EdgeInsets.all(22),
+            decoration: BoxDecoration(
+              color: Colors.white.withValues(alpha: 0.1),
+              borderRadius: BorderRadius.circular(22),
+              border: Border.all(color: Colors.white.withValues(alpha: 0.22)),
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  'Focus Score',
+                  style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                        fontWeight: FontWeight.w700,
+                      ),
+                ),
+                const SizedBox(height: 18),
+                TweenAnimationBuilder<double>(
+                  duration: const Duration(milliseconds: 1200),
+                  curve: Curves.easeOutCubic,
+                  tween: Tween<double>(begin: 0, end: percent),
+                  builder: (context, value, _) {
+                    return CircularPercentIndicator(
+                      radius: 92,
+                      lineWidth: 13,
+                      percent: value,
+                      animation: false,
+                      circularStrokeCap: CircularStrokeCap.round,
+                      progressColor: _scoreColor,
+                      backgroundColor: Colors.white.withValues(alpha: 0.12),
+                      center: Text(
+                        '${(value * 100).round()}%\nFocus',
+                        textAlign: TextAlign.center,
+                        style:
+                            Theme.of(context).textTheme.titleLarge?.copyWith(
+                                  fontWeight: FontWeight.w700,
+                                  color: _scoreColor,
+                                ),
+                      ),
+                    );
+                  },
+                ),
+                const SizedBox(height: 18),
+                Text(
+                  _message,
+                  textAlign: TextAlign.center,
+                  style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                        color: Colors.white.withValues(alpha: 0.86),
+                      ),
+                ),
+                const SizedBox(height: 10),
+                Text(
+                  'Focused $focusedSeconds sec out of $totalSeconds sec',
+                  textAlign: TextAlign.center,
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: Colors.white.withValues(alpha: 0.62),
+                      ),
+                ),
+              ],
+            ),
           ),
         ),
       ),

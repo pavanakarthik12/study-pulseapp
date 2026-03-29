@@ -2,6 +2,7 @@ import 'package:flutter_animate/flutter_animate.dart';
 import 'package:flutter/material.dart';
 
 import '../services/auth_service.dart';
+import 'focus_history_screen.dart';
 import 'study_timer_screen.dart';
 import 'widgets/ui_shell.dart';
 
@@ -69,6 +70,33 @@ class HomeScreen extends StatelessWidget {
                   ),
                 )
                     .animate(delay: 220.ms)
+                    .fade(duration: 500.ms)
+                    .slideY(begin: 0.08, end: 0, duration: 500.ms),
+                const SizedBox(height: 12),
+                SizedBox(
+                  width: 280,
+                  child: OutlinedButton.icon(
+                    onPressed: () {
+                      Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (_) => const FocusHistoryScreen(),
+                        ),
+                      );
+                    },
+                    icon: const Icon(Icons.analytics_outlined),
+                    label: const Text('View Focus History'),
+                    style: OutlinedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      side: BorderSide(
+                        color: Colors.white.withValues(alpha: 0.28),
+                      ),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                    ),
+                  ),
+                )
+                    .animate(delay: 280.ms)
                     .fade(duration: 500.ms)
                     .slideY(begin: 0.08, end: 0, duration: 500.ms),
                 const Spacer(flex: 2),
