@@ -9,10 +9,10 @@ import 'package:percent_indicator/circular_percent_indicator.dart';
 import 'widgets/ui_shell.dart';
 
 class _FocusStream {
-  const _FocusStream({required this.name, required this.url});
+  const _FocusStream({required this.name, required this.urls});
 
   final String name;
-  final String url;
+  final List<String> urls;
 }
 
 class StudyTimerScreen extends StatefulWidget {
@@ -26,16 +26,18 @@ class _StudyTimerScreenState extends State<StudyTimerScreen> {
   static const int _defaultSeconds = 25 * 60;
   static const List<_FocusStream> _streams = [
     _FocusStream(
-      name: 'Lo-fi Focus',
-      url: 'https://play.streamafrica.net/lofiradio',
+      name: 'Rain / Nature',
+      urls: [
+        'https://radio.stereoscenic.com/relaxingrain.mp3',
+        'https://radio.stereoscenic.com/relaxingrain.ogg',
+      ],
     ),
     _FocusStream(
-      name: 'Rain Focus',
-      url: 'https://play.streamafrica.net/rainradio',
-    ),
-    _FocusStream(
-      name: 'Ambient Focus',
-      url: 'https://stream-154.zeno.fm/f3ffx47z5f8uv',
+      name: 'Ambient / Deep Focus',
+      urls: [
+        'https://ice1.somafm.com/dronezone-128-mp3',
+        'https://ice2.somafm.com/dronezone-128-mp3',
+      ],
     ),
   ];
 
@@ -45,6 +47,7 @@ class _StudyTimerScreenState extends State<StudyTimerScreen> {
   int _currentStreamIndex = 0;
   bool _isRunning = false;
   bool _isAudioPlaying = false;
+  bool _isSwitchingStream = false;
   StreamSubscription<PlayerState>? _playerStateSub;
 
   _FocusStream get _currentStream => _streams[_currentStreamIndex];
@@ -58,6 +61,11 @@ class _StudyTimerScreenState extends State<StudyTimerScreen> {
       if (!mounted) {
         return;
       }
+
+      if (state.processingState == ProcessingState.completed) {
+        _audioPlayer.play();
+      }
+
       setState(() {
         _isAudioPlaying = state.playing;
       });
@@ -118,23 +126,35 @@ class _StudyTimerScreenState extends State<StudyTimerScreen> {
   }
 
   Future<void> _playCurrentStream() async {
-    try {
-      final currentUrl = _audioPlayer.audioSource is UriAudioSource
-          ? (_audioPlayer.audioSource as UriAudioSource).uri.toString()
-          : null;
+    String? lastFailedUrl;
+    for (final url in _currentStream.urls) {
+      try {
+        final currentUrl = _audioPlayer.audioSource is UriAudioSource
+            ? (_audioPlayer.audioSource as UriAudioSource).uri.toString()
+            : null;
 
-      if (currentUrl != _currentStream.url) {
-        await _audioPlayer.setUrl(_currentStream.url);
-      }
-      await _audioPlayer.play();
-    } catch (_) {
-      if (!mounted) {
+        if (currentUrl != url) {
+          await _audioPlayer.setUrl(url);
+        }
+        await _audioPlayer.play();
         return;
+      } catch (_) {
+        lastFailedUrl = url;
       }
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Could not play stream right now.')),
-      );
     }
+
+    if (!mounted) {
+      return;
+    }
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          lastFailedUrl == null
+              ? 'Could not play stream right now.'
+              : 'Could not connect to stream. Please try again.',
+        ),
+      ),
+    );
   }
 
   Future<void> _toggleAudio() async {
@@ -146,13 +166,19 @@ class _StudyTimerScreenState extends State<StudyTimerScreen> {
   }
 
   Future<void> _switchStream() async {
-    final shouldKeepPlaying = _isAudioPlaying || _isRunning;
     setState(() {
+      _isSwitchingStream = true;
       _currentStreamIndex = (_currentStreamIndex + 1) % _streams.length;
     });
 
-    if (shouldKeepPlaying) {
+    try {
       await _playCurrentStream();
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isSwitchingStream = false;
+        });
+      }
     }
   }
 
@@ -280,6 +306,7 @@ class _StudyTimerScreenState extends State<StudyTimerScreen> {
                 child: _FocusRadioCard(
                   nowPlaying: _nowPlayingLabel,
                   isPlaying: _isAudioPlaying,
+                  isSwitching: _isSwitchingStream,
                   onTogglePlay: _toggleAudio,
                   onSwitchStream: _switchStream,
                 ),
@@ -296,12 +323,14 @@ class _FocusRadioCard extends StatelessWidget {
   const _FocusRadioCard({
     required this.nowPlaying,
     required this.isPlaying,
+    required this.isSwitching,
     required this.onTogglePlay,
     required this.onSwitchStream,
   });
 
   final String nowPlaying;
   final bool isPlaying;
+  final bool isSwitching;
   final VoidCallback onTogglePlay;
   final VoidCallback onSwitchStream;
 
@@ -332,11 +361,27 @@ class _FocusRadioCard extends StatelessWidget {
           child: Row(
             children: [
               Expanded(
-                child: Text(
-                  nowPlaying,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: Theme.of(context).textTheme.titleMedium,
+                child: AnimatedSwitcher(
+                  duration: const Duration(milliseconds: 280),
+                  transitionBuilder: (child, animation) {
+                    return FadeTransition(
+                      opacity: animation,
+                      child: SlideTransition(
+                        position: Tween<Offset>(
+                          begin: const Offset(0.06, 0),
+                          end: Offset.zero,
+                        ).animate(animation),
+                        child: child,
+                      ),
+                    );
+                  },
+                  child: Text(
+                    nowPlaying,
+                    key: ValueKey<String>(nowPlaying),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
                 ),
               ),
               const SizedBox(width: 10),
@@ -345,9 +390,28 @@ class _FocusRadioCard extends StatelessWidget {
                 onTap: onTogglePlay,
               ),
               const SizedBox(width: 10),
-              _MiniActionButton(
-                icon: Icons.swap_horiz_rounded,
-                onTap: onSwitchStream,
+              AnimatedSwitcher(
+                duration: const Duration(milliseconds: 220),
+                child: isSwitching
+                    ? Container(
+                        key: const ValueKey<String>('switching'),
+                        height: 40,
+                        width: 40,
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(12),
+                          color: Colors.white.withValues(alpha: 0.12),
+                          border: Border.all(
+                            color: Colors.white.withValues(alpha: 0.2),
+                          ),
+                        ),
+                        padding: const EdgeInsets.all(10),
+                        child: const CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : _MiniActionButton(
+                        key: const ValueKey<String>('switch'),
+                        icon: Icons.swap_horiz_rounded,
+                        onTap: onSwitchStream,
+                      ),
               ),
             ],
           ),
@@ -364,7 +428,7 @@ class _FocusRadioCard extends StatelessWidget {
 }
 
 class _MiniActionButton extends StatefulWidget {
-  const _MiniActionButton({required this.icon, required this.onTap});
+  const _MiniActionButton({super.key, required this.icon, required this.onTap});
 
   final IconData icon;
   final VoidCallback onTap;
