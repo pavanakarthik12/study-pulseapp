@@ -3,6 +3,7 @@ import 'dart:math' as math;
 import 'dart:ui';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:just_audio/just_audio.dart';
@@ -187,6 +188,7 @@ class _StudyTimerScreenState extends State<StudyTimerScreen>
       focusScore: focusScore,
       distractionSeconds: distractionSeconds,
       subject: _normalizedSubject,
+      sessionStartedAt: startedAt,
     );
 
     if (!mounted) {
@@ -217,6 +219,7 @@ class _StudyTimerScreenState extends State<StudyTimerScreen>
     required int sessionDurationSeconds,
     required int distractionSeconds,
     required double focusScore,
+    required DateTime sessionStartedAt,
     String? subject,
   }) async {
     if (_isSavingSession) {
@@ -229,7 +232,13 @@ class _StudyTimerScreenState extends State<StudyTimerScreen>
         'session_duration': sessionDurationSeconds,
         'focus_score': focusScore,
         'timestamp': FieldValue.serverTimestamp(),
+        'session_started_at': Timestamp.fromDate(sessionStartedAt),
       };
+
+      final userId = FirebaseAuth.instance.currentUser?.uid;
+      if (userId != null && userId.isNotEmpty) {
+        payload['user_id'] = userId;
+      }
 
       if (subject != null && subject.isNotEmpty) {
         payload['subject'] = subject;

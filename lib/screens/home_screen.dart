@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 
 import '../services/auth_service.dart';
 import 'focus_history_screen.dart';
+import 'insights_dashboard_screen.dart';
 import 'study_timer_screen.dart';
 import 'widgets/ui_shell.dart';
 
@@ -70,6 +71,33 @@ class HomeScreen extends StatelessWidget {
                   ),
                 )
                     .animate(delay: 220.ms)
+                    .fade(duration: 500.ms)
+                    .slideY(begin: 0.08, end: 0, duration: 500.ms),
+                const SizedBox(height: 12),
+                SizedBox(
+                  width: 280,
+                  child: OutlinedButton.icon(
+                    onPressed: () {
+                      Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (_) => const InsightsDashboardScreen(),
+                        ),
+                      );
+                    },
+                    icon: const Icon(Icons.insights_rounded),
+                    label: const Text('Open Insights Dashboard'),
+                    style: OutlinedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      side: BorderSide(
+                        color: Colors.white.withValues(alpha: 0.28),
+                      ),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                    ),
+                  ),
+                )
+                    .animate(delay: 250.ms)
                     .fade(duration: 500.ms)
                     .slideY(begin: 0.08, end: 0, duration: 500.ms),
                 const SizedBox(height: 12),
