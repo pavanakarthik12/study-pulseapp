@@ -60,6 +60,20 @@ class InsightsSummary {
   final int totalSessions;
 }
 
+class DailyTrendPoint {
+  const DailyTrendPoint({
+    required this.day,
+    required this.totalStudySeconds,
+    required this.averageFocusScore,
+    required this.sessionCount,
+  });
+
+  final DateTime day;
+  final int totalStudySeconds;
+  final double averageFocusScore;
+  final int sessionCount;
+}
+
 enum PlanBlockType { study, shortBreak }
 
 class PlanBlock {
@@ -175,6 +189,52 @@ class InsightsService {
       timeOfDayStats: timeOfDayStats,
       totalSessions: sessions.length,
     );
+  }
+
+  List<DailyTrendPoint> buildRecentDailyTrend(
+    List<FocusSessionRecord> sessions, {
+    int days = 7,
+  }) {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final firstDay = today.subtract(Duration(days: days - 1));
+
+    final dayBuckets = <DateTime, _DailyAccumulator>{};
+    for (var i = 0; i < days; i++) {
+      final day = firstDay.add(Duration(days: i));
+      dayBuckets[day] = _DailyAccumulator();
+    }
+
+    for (final session in sessions) {
+      final ts = session.timestamp;
+      if (ts == null) {
+        continue;
+      }
+
+      final dayKey = DateTime(ts.year, ts.month, ts.day);
+      final bucket = dayBuckets[dayKey];
+      if (bucket == null) {
+        continue;
+      }
+
+      bucket.totalStudySeconds += session.durationSeconds;
+      bucket.totalFocusScore += session.focusScore;
+      bucket.sessionCount += 1;
+    }
+
+    return dayBuckets.entries.map((entry) {
+      final bucket = entry.value;
+      final averageFocus = bucket.sessionCount == 0
+          ? 0.0
+          : bucket.totalFocusScore / bucket.sessionCount;
+
+      return DailyTrendPoint(
+        day: entry.key,
+        totalStudySeconds: bucket.totalStudySeconds,
+        averageFocusScore: averageFocus,
+        sessionCount: bucket.sessionCount,
+      );
+    }).toList();
   }
 
   List<PlanBlock> generatePlan({
@@ -330,4 +390,10 @@ class InsightsService {
     final suffix = normalized >= 12 ? 'PM' : 'AM';
     return '$hour12 $suffix';
   }
+}
+
+class _DailyAccumulator {
+  int totalStudySeconds = 0;
+  double totalFocusScore = 0;
+  int sessionCount = 0;
 }

@@ -14,7 +14,7 @@ class _InsightsDashboardScreenState extends State<InsightsDashboardScreen> {
   final InsightsService _insightsService = InsightsService();
   final TextEditingController _subjectsController = TextEditingController();
 
-  late Future<InsightsSummary> _insightsFuture;
+  late Future<_DashboardData> _insightsFuture;
 
   TimeOfDay _startTime = const TimeOfDay(hour: 18, minute: 0);
   TimeOfDay _endTime = const TimeOfDay(hour: 21, minute: 0);
@@ -32,9 +32,12 @@ class _InsightsDashboardScreenState extends State<InsightsDashboardScreen> {
     super.dispose();
   }
 
-  Future<InsightsSummary> _loadInsights() async {
+  Future<_DashboardData> _loadInsights() async {
     final sessions = await _insightsService.fetchRecentSessions();
-    return _insightsService.buildInsightsSummary(sessions);
+    return _DashboardData(
+      summary: _insightsService.buildInsightsSummary(sessions),
+      weeklyTrend: _insightsService.buildRecentDailyTrend(sessions),
+    );
   }
 
   Future<void> _pickStartTime() async {
@@ -146,7 +149,7 @@ class _InsightsDashboardScreenState extends State<InsightsDashboardScreen> {
                   ),
                 ),
                 const SizedBox(height: 10),
-                FutureBuilder<InsightsSummary>(
+                FutureBuilder<_DashboardData>(
                   future: _insightsFuture,
                   builder: (context, snapshot) {
                     if (snapshot.connectionState == ConnectionState.waiting) {
@@ -167,77 +170,125 @@ class _InsightsDashboardScreenState extends State<InsightsDashboardScreen> {
                       );
                     }
 
-                    final summary = snapshot.data ??
-                        const InsightsSummary(
-                          totalStudySeconds: 0,
-                          averageFocusScore: 0,
-                          bestSessionTimeLabel: 'No sessions yet',
-                          bestFocusWindowLabel: 'Not enough data yet',
-                          timeOfDayStats: <TimeOfDayStats>[],
-                          totalSessions: 0,
+                    final payload = snapshot.data ??
+                        _DashboardData(
+                          summary: const InsightsSummary(
+                            totalStudySeconds: 0,
+                            averageFocusScore: 0,
+                            bestSessionTimeLabel: 'No sessions yet',
+                            bestFocusWindowLabel: 'Not enough data yet',
+                            timeOfDayStats: <TimeOfDayStats>[],
+                            totalSessions: 0,
+                          ),
+                          weeklyTrend: const <DailyTrendPoint>[],
                         );
 
-                    return GlassCard(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Wrap(
-                            spacing: 12,
-                            runSpacing: 12,
+                    final summary = payload.summary;
+
+                    return Column(
+                      children: [
+                        GlassCard(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              _MetricCard(
-                                title: 'Total Study Time',
-                                value: _formatDuration(summary.totalStudySeconds),
-                                icon: Icons.timer_outlined,
+                              Wrap(
+                                spacing: 12,
+                                runSpacing: 12,
+                                children: [
+                                  _MetricCard(
+                                    title: 'Total Study Time',
+                                    value: _formatDuration(summary.totalStudySeconds),
+                                    icon: Icons.timer_outlined,
+                                  ),
+                                  _MetricCard(
+                                    title: 'Average Focus Score',
+                                    value: '${summary.averageFocusScore.toStringAsFixed(1)}%',
+                                    icon: Icons.psychology_alt_outlined,
+                                  ),
+                                  _MetricCard(
+                                    title: 'Best Study Time',
+                                    value: summary.bestSessionTimeLabel,
+                                    icon: Icons.schedule,
+                                  ),
+                                ],
                               ),
-                              _MetricCard(
-                                title: 'Average Focus Score',
-                                value: '${summary.averageFocusScore.toStringAsFixed(1)}%',
-                                icon: Icons.psychology_alt_outlined,
+                              const SizedBox(height: 16),
+                              Text(
+                                summary.bestFocusWindowLabel,
+                                style: theme.textTheme.titleMedium?.copyWith(
+                                  fontWeight: FontWeight.w600,
+                                ),
                               ),
-                              _MetricCard(
-                                title: 'Best Study Time',
-                                value: summary.bestSessionTimeLabel,
-                                icon: Icons.schedule,
+                              const SizedBox(height: 10),
+                              if (summary.timeOfDayStats.isEmpty)
+                                Text(
+                                  'Complete more sessions to unlock time-of-day grouping insights.',
+                                  style: theme.textTheme.bodyMedium?.copyWith(
+                                    color: Colors.white.withValues(alpha: 0.7),
+                                  ),
+                                ),
+                              if (summary.timeOfDayStats.isNotEmpty)
+                                Wrap(
+                                  spacing: 8,
+                                  runSpacing: 8,
+                                  children: summary.timeOfDayStats
+                                      .map(
+                                        (segment) => Chip(
+                                          label: Text(
+                                            '${segment.label}: ${segment.averageFocusScore.toStringAsFixed(0)}% (${segment.sessionCount})',
+                                          ),
+                                          backgroundColor:
+                                              Colors.white.withValues(alpha: 0.08),
+                                          side: BorderSide(
+                                            color: Colors.white.withValues(alpha: 0.2),
+                                          ),
+                                        ),
+                                      )
+                                      .toList(),
+                                ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        GlassCard(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'Weekly Trends (7 days)',
+                                style: theme.textTheme.titleMedium?.copyWith(
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                              const SizedBox(height: 8),
+                              Text(
+                                'Study time and focus score trends from recent sessions.',
+                                style: theme.textTheme.bodySmall?.copyWith(
+                                  color: Colors.white.withValues(alpha: 0.68),
+                                ),
+                              ),
+                              const SizedBox(height: 14),
+                              _TrendBarStrip(
+                                title: 'Daily Study Time',
+                                points: payload.weeklyTrend,
+                                valueGetter: (point) => point.totalStudySeconds / 3600,
+                                valueLabelBuilder: (point) {
+                                  final mins = (point.totalStudySeconds / 60).round();
+                                  return '${mins}m';
+                                },
+                              ),
+                              const SizedBox(height: 16),
+                              _TrendBarStrip(
+                                title: 'Daily Average Focus',
+                                points: payload.weeklyTrend,
+                                valueGetter: (point) => point.averageFocusScore,
+                                valueLabelBuilder: (point) =>
+                                    '${point.averageFocusScore.toStringAsFixed(0)}%',
                               ),
                             ],
                           ),
-                          const SizedBox(height: 16),
-                          Text(
-                            summary.bestFocusWindowLabel,
-                            style: theme.textTheme.titleMedium?.copyWith(
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                          const SizedBox(height: 10),
-                          if (summary.timeOfDayStats.isEmpty)
-                            Text(
-                              'Complete more sessions to unlock time-of-day grouping insights.',
-                              style: theme.textTheme.bodyMedium?.copyWith(
-                                color: Colors.white.withValues(alpha: 0.7),
-                              ),
-                            ),
-                          if (summary.timeOfDayStats.isNotEmpty)
-                            Wrap(
-                              spacing: 8,
-                              runSpacing: 8,
-                              children: summary.timeOfDayStats
-                                  .map(
-                                    (segment) => Chip(
-                                      label: Text(
-                                        '${segment.label}: ${segment.averageFocusScore.toStringAsFixed(0)}% (${segment.sessionCount})',
-                                      ),
-                                      backgroundColor:
-                                          Colors.white.withValues(alpha: 0.08),
-                                      side: BorderSide(
-                                        color: Colors.white.withValues(alpha: 0.2),
-                                      ),
-                                    ),
-                                  )
-                                  .toList(),
-                            ),
-                        ],
-                      ),
+                        ),
+                      ],
                     );
                   },
                 ),
@@ -399,6 +450,116 @@ class _MetricCard extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+class _DashboardData {
+  const _DashboardData({
+    required this.summary,
+    required this.weeklyTrend,
+  });
+
+  final InsightsSummary summary;
+  final List<DailyTrendPoint> weeklyTrend;
+}
+
+class _TrendBarStrip extends StatelessWidget {
+  const _TrendBarStrip({
+    required this.title,
+    required this.points,
+    required this.valueGetter,
+    required this.valueLabelBuilder,
+  });
+
+  final String title;
+  final List<DailyTrendPoint> points;
+  final double Function(DailyTrendPoint point) valueGetter;
+  final String Function(DailyTrendPoint point) valueLabelBuilder;
+
+  String _dayShortLabel(DateTime day) {
+    const names = <int, String>{
+      DateTime.monday: 'M',
+      DateTime.tuesday: 'T',
+      DateTime.wednesday: 'W',
+      DateTime.thursday: 'T',
+      DateTime.friday: 'F',
+      DateTime.saturday: 'S',
+      DateTime.sunday: 'S',
+    };
+    return names[day.weekday] ?? '-';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final maxValue = points.isEmpty
+        ? 0.0
+        : points.map(valueGetter).reduce((a, b) => a > b ? a : b);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          title,
+          style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                fontWeight: FontWeight.w600,
+              ),
+        ),
+        const SizedBox(height: 10),
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: points.map((point) {
+            final rawValue = valueGetter(point);
+            final normalized = maxValue <= 0 ? 0.0 : (rawValue / maxValue);
+
+            return Expanded(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 3),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      valueLabelBuilder(point),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                            color: Colors.white.withValues(alpha: 0.72),
+                          ),
+                    ),
+                    const SizedBox(height: 6),
+                    Container(
+                      height: 62,
+                      width: double.infinity,
+                      alignment: Alignment.bottomCenter,
+                      child: FractionallySizedBox(
+                        alignment: Alignment.bottomCenter,
+                        heightFactor: (normalized.clamp(0.08, 1.0)).toDouble(),
+                        child: Container(
+                          decoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(8),
+                            gradient: const LinearGradient(
+                              begin: Alignment.bottomCenter,
+                              end: Alignment.topCenter,
+                              colors: [Color(0xFF57D2FF), Color(0xFF7C9BFF)],
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      _dayShortLabel(point.day),
+                      style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                            color: Colors.white.withValues(alpha: 0.8),
+                          ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          }).toList(),
+        ),
+      ],
     );
   }
 }
