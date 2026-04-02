@@ -1,4 +1,7 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 
 import '../services/insights_service.dart';
 import 'widgets/ui_shell.dart';
@@ -18,7 +21,10 @@ class _InsightsDashboardScreenState extends State<InsightsDashboardScreen> {
 
   TimeOfDay _startTime = const TimeOfDay(hour: 18, minute: 0);
   TimeOfDay _endTime = const TimeOfDay(hour: 21, minute: 0);
-  List<PlanBlock> _planBlocks = const <PlanBlock>[];
+  List<TrackedPlanBlock> _trackedBlocks = const <TrackedPlanBlock>[];
+  String? _activePlanId;
+  bool _isCreatingPlan = false;
+  final Set<int> _updatingBlockIndexes = <int>{};
 
   @override
   void initState() {
@@ -33,11 +39,51 @@ class _InsightsDashboardScreenState extends State<InsightsDashboardScreen> {
   }
 
   Future<_DashboardData> _loadInsights() async {
-    final sessions = await _insightsService.fetchRecentSessions();
-    return _DashboardData(
-      summary: _insightsService.buildInsightsSummary(sessions),
-      weeklyTrend: _insightsService.buildRecentDailyTrend(sessions),
-    );
+    try {
+      final sessions = await _insightsService.fetchRecentSessions();
+      final userId = FirebaseAuth.instance.currentUser?.uid;
+
+      final summary = _insightsService.buildInsightsSummary(sessions);
+      final trend = _insightsService.buildRecentDailyTrend(sessions);
+
+      final streak = _insightsService.calculateStreakFromSessions(sessions);
+      final goal = _insightsService.calculateWeeklyGoal(sessions);
+
+      if (userId != null && userId.isNotEmpty) {
+        unawaited(_insightsService.updateStreakData(userId, streak));
+      }
+
+      return _DashboardData(
+        summary: summary,
+        weeklyTrend: trend,
+        streak: streak,
+        weeklyGoal: goal,
+      );
+    } catch (_) {
+      return _DashboardData(
+        summary: const InsightsSummary(
+          totalStudySeconds: 0,
+          averageFocusScore: 0,
+          bestSessionTimeLabel: 'Error loading',
+          bestFocusWindowLabel: 'Failed to load data',
+          timeOfDayStats: <TimeOfDayStats>[],
+          totalSessions: 0,
+        ),
+        weeklyTrend: const <DailyTrendPoint>[],
+        streak: const StreakData(
+          currentStreak: 0,
+          longestStreak: 0,
+          lastSessionDate: null,
+          hasSevenDayBadge: false,
+          hasThirtyDayBadge: false,
+        ),
+        weeklyGoal: WeeklyGoal(
+          targetSessions: 5,
+          currentWeekSessionCount: 0,
+          weekStartDate: DateTime.now(),
+        ),
+      );
+    }
   }
 
   Future<void> _pickStartTime() async {
@@ -66,7 +112,7 @@ class _InsightsDashboardScreenState extends State<InsightsDashboardScreen> {
     }
   }
 
-  void _generatePlan() {
+  Future<void> _generatePlan() async {
     final subjects = _subjectsController.text
         .split(RegExp(r'[\n,]+'))
         .map((value) => value.trim())
@@ -79,9 +125,69 @@ class _InsightsDashboardScreenState extends State<InsightsDashboardScreen> {
       endTime: _endTime,
     );
 
+    if (blocks.isEmpty) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _activePlanId = null;
+        _trackedBlocks = const <TrackedPlanBlock>[];
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Time range is too short. Add at least 25 minutes.'),
+        ),
+      );
+      return;
+    }
+
+    final userId = FirebaseAuth.instance.currentUser?.uid;
+    if (userId == null || userId.isEmpty) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Please login to save and track plan progress.'),
+        ),
+      );
+      return;
+    }
+
     setState(() {
-      _planBlocks = blocks;
+      _isCreatingPlan = true;
     });
+
+    try {
+      final trackedPlan = await _insightsService.createStudyPlan(
+        userId: userId,
+        blocks: blocks,
+      );
+
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _activePlanId = trackedPlan.id;
+        _trackedBlocks = trackedPlan.blocks;
+      });
+    } catch (_) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Could not save plan to Firestore right now.'),
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isCreatingPlan = false;
+        });
+      }
+    }
   }
 
   String _formatDuration(int seconds) {
@@ -93,11 +199,76 @@ class _InsightsDashboardScreenState extends State<InsightsDashboardScreen> {
     return '${hours}h ${minutes}m';
   }
 
-  String _formatTime(DateTime value) {
-    final hour = value.hour % 12 == 0 ? 12 : value.hour % 12;
-    final minute = value.minute.toString().padLeft(2, '0');
-    final suffix = value.hour >= 12 ? 'PM' : 'AM';
-    return '$hour:$minute $suffix';
+  Future<void> _updateBlockStatus({
+    required int index,
+    required PlanBlockStatus status,
+  }) async {
+    final planId = _activePlanId;
+    if (planId == null || index < 0 || index >= _trackedBlocks.length) {
+      return;
+    }
+
+    if (_updatingBlockIndexes.contains(index)) {
+      return;
+    }
+
+    final previous = List<TrackedPlanBlock>.from(_trackedBlocks);
+    final optimistic = List<TrackedPlanBlock>.from(_trackedBlocks);
+    optimistic[index] = optimistic[index].copyWith(status: status);
+
+    setState(() {
+      _updatingBlockIndexes.add(index);
+      _trackedBlocks = optimistic;
+    });
+
+    try {
+      await _insightsService.updateBlockStatus(
+        planId: planId,
+        blockIndex: index,
+        status: status,
+        blocks: previous,
+      );
+    } catch (_) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _trackedBlocks = previous;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Status update failed. Please try again.'),
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _updatingBlockIndexes.remove(index);
+        });
+      }
+    }
+  }
+
+  Color _statusColor(PlanBlockStatus status) {
+    switch (status) {
+      case PlanBlockStatus.done:
+        return const Color(0xFF4BD37B);
+      case PlanBlockStatus.skipped:
+        return const Color(0xFFFF6B6B);
+      case PlanBlockStatus.pending:
+        return Colors.white.withValues(alpha: 0.45);
+    }
+  }
+
+  String _statusLabel(PlanBlockStatus status) {
+    switch (status) {
+      case PlanBlockStatus.done:
+        return 'Done';
+      case PlanBlockStatus.skipped:
+        return 'Skipped';
+      case PlanBlockStatus.pending:
+        return 'Pending';
+    }
   }
 
   @override
@@ -109,9 +280,7 @@ class _InsightsDashboardScreenState extends State<InsightsDashboardScreen> {
         child: SafeArea(
           child: RefreshIndicator(
             onRefresh: () async {
-              setState(() {
-                _insightsFuture = _loadInsights();
-              });
+              _insightsFuture = _loadInsights();
               await _insightsFuture;
             },
             child: ListView(
@@ -181,9 +350,23 @@ class _InsightsDashboardScreenState extends State<InsightsDashboardScreen> {
                             totalSessions: 0,
                           ),
                           weeklyTrend: const <DailyTrendPoint>[],
+                          streak: const StreakData(
+                            currentStreak: 0,
+                            longestStreak: 0,
+                            lastSessionDate: null,
+                            hasSevenDayBadge: false,
+                            hasThirtyDayBadge: false,
+                          ),
+                          weeklyGoal: WeeklyGoal(
+                            targetSessions: 5,
+                            currentWeekSessionCount: 0,
+                            weekStartDate: DateTime.now(),
+                          ),
                         );
 
                     final summary = payload.summary;
+                    final streak = payload.streak;
+                    final goal = payload.weeklyGoal;
 
                     return Column(
                       children: [
@@ -191,6 +374,124 @@ class _InsightsDashboardScreenState extends State<InsightsDashboardScreen> {
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
+                              Row(
+                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                children: [
+                                  Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        '🔥 ${streak.currentStreak}-Day Streak',
+                                        style: theme.textTheme.headlineSmall
+                                            ?.copyWith(
+                                          fontWeight: FontWeight.w700,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 4),
+                                      Text(
+                                        'Longest: ${streak.longestStreak} days',
+                                        style: theme.textTheme.bodyMedium
+                                            ?.copyWith(
+                                          color: Colors.white
+                                              .withValues(alpha: 0.7),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  Row(
+                                    children: [
+                                      if (streak.hasSevenDayBadge)
+                                        Tooltip(
+                                          message: '7-Day Streak Badge',
+                                          child: Container(
+                                            padding: const EdgeInsets.all(8),
+                                            decoration: BoxDecoration(
+                                              shape: BoxShape.circle,
+                                              color: const Color(0xFFFFD700)
+                                                  .withValues(alpha: 0.2),
+                                            ),
+                                            child: const Text(
+                                              '⭐',
+                                              style: TextStyle(fontSize: 20),
+                                            ),
+                                          ),
+                                        ),
+                                      const SizedBox(width: 8),
+                                      if (streak.hasThirtyDayBadge)
+                                        Tooltip(
+                                          message: '30-Day Streak Badge',
+                                          child: Container(
+                                            padding: const EdgeInsets.all(8),
+                                            decoration: BoxDecoration(
+                                              shape: BoxShape.circle,
+                                              color: const Color(0xFF4BD37B)
+                                                  .withValues(alpha: 0.2),
+                                            ),
+                                            child: const Text(
+                                              '👑',
+                                              style: TextStyle(fontSize: 20),
+                                            ),
+                                          ),
+                                        ),
+                                    ],
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 16),
+                              Container(
+                                padding: const EdgeInsets.all(12),
+                                decoration: BoxDecoration(
+                                  borderRadius: BorderRadius.circular(14),
+                                  color: Colors.white.withValues(alpha: 0.08),
+                                ),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Row(
+                                      mainAxisAlignment:
+                                          MainAxisAlignment.spaceBetween,
+                                      children: [
+                                        Text(
+                                          'Weekly Goal',
+                                          style: theme.textTheme.titleMedium
+                                              ?.copyWith(
+                                            fontWeight: FontWeight.w600,
+                                          ),
+                                        ),
+                                        Text(
+                                          '${goal.currentWeekSessionCount}/${goal.targetSessions}',
+                                          style: theme.textTheme.titleMedium
+                                              ?.copyWith(
+                                            fontWeight: FontWeight.w700,
+                                            color: goal.isCompleted
+                                                ? const Color(0xFF4BD37B)
+                                                : const Color(0xFF57D2FF),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                    const SizedBox(height: 8),
+                                    ClipRRect(
+                                      borderRadius: BorderRadius.circular(8),
+                                      child: LinearProgressIndicator(
+                                        value: (goal.currentWeekSessionCount /
+                                                goal.targetSessions)
+                                            .clamp(0.0, 1.0),
+                                        minHeight: 6,
+                                        backgroundColor: Colors.white
+                                            .withValues(alpha: 0.15),
+                                        valueColor:
+                                            AlwaysStoppedAnimation<Color>(
+                                          goal.isCompleted
+                                              ? const Color(0xFF4BD37B)
+                                              : const Color(0xFF57D2FF),
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              const SizedBox(height: 16),
                               Wrap(
                                 spacing: 12,
                                 runSpacing: 12,
@@ -337,6 +638,7 @@ class _InsightsDashboardScreenState extends State<InsightsDashboardScreen> {
                         width: double.infinity,
                         child: GradientActionButton(
                           label: 'Generate Auto Plan',
+                          isLoading: _isCreatingPlan,
                           onPressed: _generatePlan,
                         ),
                       ),
@@ -351,50 +653,44 @@ class _InsightsDashboardScreenState extends State<InsightsDashboardScreen> {
                   ),
                 ),
                 const SizedBox(height: 14),
-                if (_planBlocks.isEmpty)
+                if (_activePlanId != null)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 10),
+                    child: Text(
+                      'Plan is synced to Firestore. Mark blocks as done or skipped to track behavior.',
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: Colors.white.withValues(alpha: 0.74),
+                      ),
+                    ),
+                  ),
+                if (_trackedBlocks.isEmpty)
                   Text(
                     'No generated sessions yet. Add tasks and time range, then tap Generate Auto Plan.',
                     style: theme.textTheme.bodyMedium?.copyWith(
                       color: Colors.white.withValues(alpha: 0.75),
                     ),
                   ),
-                if (_planBlocks.isNotEmpty)
-                  ..._planBlocks.map(
-                    (block) => Padding(
+                if (_trackedBlocks.isNotEmpty)
+                  ..._trackedBlocks.asMap().entries.map(
+                    (entry) => Padding(
                       padding: const EdgeInsets.only(bottom: 10),
-                      child: GlassCard(
-                        child: Row(
-                          children: [
-                            Icon(
-                              block.type == PlanBlockType.study
-                                  ? Icons.menu_book_rounded
-                                  : Icons.free_breakfast_rounded,
-                            ),
-                            const SizedBox(width: 12),
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    block.type == PlanBlockType.study
-                                        ? (block.subject ?? 'Study Session')
-                                        : 'Short Break',
-                                    style: theme.textTheme.titleMedium?.copyWith(
-                                      fontWeight: FontWeight.w600,
-                                    ),
-                                  ),
-                                  const SizedBox(height: 4),
-                                  Text(
-                                    '${_formatTime(block.start)} - ${_formatTime(block.end)} • ${block.durationMinutes} min',
-                                    style: theme.textTheme.bodyMedium?.copyWith(
-                                      color: Colors.white.withValues(alpha: 0.75),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ],
-                        ),
+                      child: _TrackedPlanBlockTile(
+                        block: entry.value,
+                        statusColor: _statusColor(entry.value.status),
+                        statusLabel: _statusLabel(entry.value.status),
+                        isUpdating: _updatingBlockIndexes.contains(entry.key),
+                        onDone: entry.value.status == PlanBlockStatus.pending
+                            ? () => _updateBlockStatus(
+                                  index: entry.key,
+                                  status: PlanBlockStatus.done,
+                                )
+                            : null,
+                        onSkip: entry.value.status == PlanBlockStatus.pending
+                            ? () => _updateBlockStatus(
+                                  index: entry.key,
+                                  status: PlanBlockStatus.skipped,
+                                )
+                            : null,
                       ),
                     ),
                   ),
@@ -407,6 +703,138 @@ class _InsightsDashboardScreenState extends State<InsightsDashboardScreen> {
   }
 }
 
+class _TrackedPlanBlockTile extends StatelessWidget {
+  const _TrackedPlanBlockTile({
+    required this.block,
+    required this.statusLabel,
+    required this.statusColor,
+    required this.onDone,
+    required this.onSkip,
+    this.isUpdating = false,
+  });
+
+  final TrackedPlanBlock block;
+  final String statusLabel;
+  final Color statusColor;
+  final VoidCallback? onDone;
+  final VoidCallback? onSkip;
+  final bool isUpdating;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return GlassCard(
+      child: Container(
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: statusColor.withValues(alpha: 0.85)),
+          color: statusColor.withValues(alpha: 0.08),
+        ),
+        padding: const EdgeInsets.all(12),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(
+              block.type == PlanBlockType.study
+                  ? Icons.menu_book_rounded
+                  : Icons.free_breakfast_rounded,
+              color: statusColor,
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          block.subject,
+                          style: theme.textTheme.titleMedium?.copyWith(
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 4,
+                        ),
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(999),
+                          color: statusColor.withValues(alpha: 0.2),
+                        ),
+                        child: Text(
+                          statusLabel,
+                          style: theme.textTheme.labelMedium?.copyWith(
+                            color: statusColor,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    '${block.durationMinutes} min',
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      color: Colors.white.withValues(alpha: 0.75),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: isUpdating ? null : onDone,
+                          icon: const Icon(Icons.check_circle_outline),
+                          label: const Text('Mark Done'),
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: const Color(0xFF4BD37B),
+                            side: BorderSide(
+                              color: const Color(0xFF4BD37B)
+                                  .withValues(alpha: 0.65),
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: isUpdating ? null : onSkip,
+                          icon: const Icon(Icons.cancel_outlined),
+                          label: const Text('Skip'),
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: const Color(0xFFFF6B6B),
+                            side: BorderSide(
+                              color: const Color(0xFFFF6B6B)
+                                  .withValues(alpha: 0.65),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  if (isUpdating)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 10),
+                      child: Text(
+                        'Updating status...',
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: Colors.white.withValues(alpha: 0.7),
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
 class _MetricCard extends StatelessWidget {
   const _MetricCard({
     required this.title,
@@ -458,10 +886,14 @@ class _DashboardData {
   const _DashboardData({
     required this.summary,
     required this.weeklyTrend,
+    required this.streak,
+    required this.weeklyGoal,
   });
 
   final InsightsSummary summary;
   final List<DailyTrendPoint> weeklyTrend;
+  final StreakData streak;
+  final WeeklyGoal weeklyGoal;
 }
 
 class _TrendBarStrip extends StatelessWidget {

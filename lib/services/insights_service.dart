@@ -76,6 +76,8 @@ class DailyTrendPoint {
 
 enum PlanBlockType { study, shortBreak }
 
+enum PlanBlockStatus { pending, done, skipped }
+
 class PlanBlock {
   const PlanBlock({
     required this.type,
@@ -92,11 +94,139 @@ class PlanBlock {
   int get durationMinutes => end.difference(start).inMinutes;
 }
 
+class TrackedPlanBlock {
+  const TrackedPlanBlock({
+    required this.subject,
+    required this.durationMinutes,
+    required this.status,
+    this.type = PlanBlockType.study,
+  });
+
+  final String subject;
+  final int durationMinutes;
+  final PlanBlockStatus status;
+  final PlanBlockType type;
+
+  TrackedPlanBlock copyWith({PlanBlockStatus? status}) {
+    return TrackedPlanBlock(
+      subject: subject,
+      durationMinutes: durationMinutes,
+      status: status ?? this.status,
+      type: type,
+    );
+  }
+
+  Map<String, dynamic> toMap() {
+    return <String, dynamic>{
+      'subject': subject,
+      'duration_minutes': durationMinutes,
+      'status': status.name,
+      'type': type.name,
+    };
+  }
+}
+
+class TrackedStudyPlan {
+  const TrackedStudyPlan({
+    required this.id,
+    required this.userId,
+    required this.blocks,
+  });
+
+  final String id;
+  final String userId;
+  final List<TrackedPlanBlock> blocks;
+}
+
+class StreakData {
+  const StreakData({
+    required this.currentStreak,
+    required this.longestStreak,
+    required this.lastSessionDate,
+    required this.hasSevenDayBadge,
+    required this.hasThirtyDayBadge,
+  });
+
+  final int currentStreak;
+  final int longestStreak;
+  final DateTime? lastSessionDate;
+  final bool hasSevenDayBadge;
+  final bool hasThirtyDayBadge;
+
+  factory StreakData.fromMap(Map<String, dynamic> data) {
+    final rawLastSession = data['last_session_date'];
+    DateTime? lastSessionDate;
+    if (rawLastSession is Timestamp) {
+      lastSessionDate = rawLastSession.toDate();
+    }
+
+    return StreakData(
+      currentStreak: (data['current_streak'] as num?)?.toInt() ?? 0,
+      longestStreak: (data['longest_streak'] as num?)?.toInt() ?? 0,
+      lastSessionDate: lastSessionDate,
+      hasSevenDayBadge: (data['has_seven_day_badge'] as bool?) ?? false,
+      hasThirtyDayBadge: (data['has_thirty_day_badge'] as bool?) ?? false,
+    );
+  }
+
+  Map<String, dynamic> toMap() {
+    return <String, dynamic>{
+      'current_streak': currentStreak,
+      'longest_streak': longestStreak,
+      'last_session_date': lastSessionDate == null
+          ? null
+          : Timestamp.fromDate(lastSessionDate!),
+      'has_seven_day_badge': hasSevenDayBadge,
+      'has_thirty_day_badge': hasThirtyDayBadge,
+    };
+  }
+}
+
+class WeeklyGoal {
+  const WeeklyGoal({
+    required this.targetSessions,
+    required this.currentWeekSessionCount,
+    required this.weekStartDate,
+  });
+
+  final int targetSessions;
+  final int currentWeekSessionCount;
+  final DateTime weekStartDate;
+
+  bool get isCompleted => currentWeekSessionCount >= targetSessions;
+
+  factory WeeklyGoal.fromMap(Map<String, dynamic> data) {
+    final rawWeekStart = data['week_start_date'];
+    DateTime weekStartDate = DateTime.now();
+    if (rawWeekStart is Timestamp) {
+      weekStartDate = rawWeekStart.toDate();
+    }
+
+    return WeeklyGoal(
+      targetSessions: (data['target_sessions'] as num?)?.toInt() ?? 5,
+      currentWeekSessionCount:
+          (data['current_week_session_count'] as num?)?.toInt() ?? 0,
+      weekStartDate: weekStartDate,
+    );
+  }
+
+  Map<String, dynamic> toMap() {
+    return <String, dynamic>{
+      'target_sessions': targetSessions,
+      'current_week_session_count': currentWeekSessionCount,
+      'week_start_date': Timestamp.fromDate(weekStartDate),
+    };
+  }
+}
+
 class InsightsService {
   InsightsService({FirebaseFirestore? firestore})
       : _firestore = firestore ?? FirebaseFirestore.instance;
 
   final FirebaseFirestore _firestore;
+
+  CollectionReference<Map<String, dynamic>> get _plansCollection =>
+      _firestore.collection('study_plans');
 
   Future<List<FocusSessionRecord>> fetchRecentSessions({int limit = 160}) async {
     final query = _firestore
@@ -126,12 +256,12 @@ class InsightsService {
     final validSessions = sessions.where((session) => session.durationSeconds > 0);
     final totalStudySeconds = validSessions.fold<int>(
       0,
-      (sum, session) => sum + session.durationSeconds,
+      (total, session) => total + session.durationSeconds,
     );
 
     final avgFocus = sessions.fold<double>(
           0,
-          (sum, session) => sum + session.focusScore,
+          (total, session) => total + session.focusScore,
         ) /
         sessions.length;
 
@@ -323,6 +453,188 @@ class InsightsService {
     }
 
     return blocks;
+  }
+
+  Future<TrackedStudyPlan> createStudyPlan({
+    required String userId,
+    required List<PlanBlock> blocks,
+  }) async {
+    final trackedBlocks = blocks
+        .map(
+          (block) => TrackedPlanBlock(
+            subject: block.subject ?? 'Short Break',
+            durationMinutes: block.durationMinutes,
+            status: PlanBlockStatus.pending,
+            type: block.type,
+          ),
+        )
+        .toList();
+
+    final planPayload = <String, dynamic>{
+      'user_id': userId,
+      'created_at': FieldValue.serverTimestamp(),
+      'updated_at': FieldValue.serverTimestamp(),
+      'blocks': trackedBlocks.map((block) => block.toMap()).toList(),
+    };
+
+    final docRef = await _plansCollection.add(planPayload);
+
+    return TrackedStudyPlan(
+      id: docRef.id,
+      userId: userId,
+      blocks: trackedBlocks,
+    );
+  }
+
+  Future<void> updateBlockStatus({
+    required String planId,
+    required int blockIndex,
+    required PlanBlockStatus status,
+    required List<TrackedPlanBlock> blocks,
+  }) async {
+    if (blockIndex < 0 || blockIndex >= blocks.length) {
+      return;
+    }
+
+    final updatedBlocks = <TrackedPlanBlock>[];
+    for (var index = 0; index < blocks.length; index++) {
+      final block = blocks[index];
+      updatedBlocks.add(
+        index == blockIndex ? block.copyWith(status: status) : block,
+      );
+    }
+
+    await _plansCollection.doc(planId).update({
+      'updated_at': FieldValue.serverTimestamp(),
+      'blocks': updatedBlocks.map((block) => block.toMap()).toList(),
+    });
+  }
+
+  StreakData calculateStreakFromSessions(List<FocusSessionRecord> sessions) {
+    if (sessions.isEmpty) {
+      return const StreakData(
+        currentStreak: 0,
+        longestStreak: 0,
+        lastSessionDate: null,
+        hasSevenDayBadge: false,
+        hasThirtyDayBadge: false,
+      );
+    }
+
+    final sortedSessions = [...sessions]
+      ..sort((a, b) => (b.timestamp ?? DateTime(1)).compareTo(a.timestamp ?? DateTime(1)));
+
+    final now = DateTime.now();
+    final todayStart = DateTime(now.year, now.month, now.day);
+
+    final sessionDayBuckets = <DateTime, bool>{};
+    for (final session in sortedSessions) {
+      final ts = session.timestamp;
+      if (ts == null) continue;
+      final day = DateTime(ts.year, ts.month, ts.day);
+      sessionDayBuckets[day] = true;
+    }
+
+    int currentStreak = 0;
+    int longestStreak = 0;
+    DateTime? lastSessionDate;
+
+    var checkDate = todayStart;
+    for (var i = 0; i < 365; i++) {
+      if (sessionDayBuckets[checkDate] == true) {
+        currentStreak += 1;
+        lastSessionDate ??= checkDate;
+      } else {
+        if (currentStreak > longestStreak) {
+          longestStreak = currentStreak;
+        }
+        currentStreak = 0;
+      }
+      checkDate = checkDate.subtract(const Duration(days: 1));
+    }
+
+    if (currentStreak > longestStreak) {
+      longestStreak = currentStreak;
+    }
+
+    return StreakData(
+      currentStreak: currentStreak,
+      longestStreak: longestStreak,
+      lastSessionDate: lastSessionDate,
+      hasSevenDayBadge: longestStreak >= 7,
+      hasThirtyDayBadge: longestStreak >= 30,
+    );
+  }
+
+  WeeklyGoal calculateWeeklyGoal(List<FocusSessionRecord> sessions) {
+    final now = DateTime.now();
+    final weekStart = now.subtract(Duration(days: now.weekday - 1));
+    final weekStartDate = DateTime(weekStart.year, weekStart.month, weekStart.day);
+    final weekEndDate = weekStartDate.add(const Duration(days: 7));
+
+    int thisWeekSessionCount = 0;
+    for (final session in sessions) {
+      final ts = session.timestamp;
+      if (ts == null) continue;
+      if (ts.isAfter(weekStartDate) && ts.isBefore(weekEndDate)) {
+        thisWeekSessionCount += 1;
+      }
+    }
+
+    return WeeklyGoal(
+      targetSessions: 5,
+      currentWeekSessionCount: thisWeekSessionCount,
+      weekStartDate: weekStartDate,
+    );
+  }
+
+  Future<StreakData> fetchStreakData(String userId) async {
+    try {
+      final doc = await _firestore.collection('user_streaks').doc(userId).get();
+      if (doc.exists) {
+        return StreakData.fromMap(doc.data() ?? {});
+      }
+    } catch (_) {}
+
+    return const StreakData(
+      currentStreak: 0,
+      longestStreak: 0,
+      lastSessionDate: null,
+      hasSevenDayBadge: false,
+      hasThirtyDayBadge: false,
+    );
+  }
+
+  Future<void> updateStreakData(String userId, StreakData streak) async {
+    try {
+      await _firestore.collection('user_streaks').doc(userId).set(
+            <String, dynamic>{
+              'user_id': userId,
+              ...streak.toMap(),
+              'updated_at': FieldValue.serverTimestamp(),
+            },
+            SetOptions(merge: true),
+          );
+    } catch (_) {}
+  }
+
+  Future<WeeklyGoal> fetchWeeklyGoal(String userId) async {
+    try {
+      final doc = await _firestore.collection('user_goals').doc(userId).get();
+      if (doc.exists) {
+        return WeeklyGoal.fromMap(doc.data() ?? {});
+      }
+    } catch (_) {}
+
+    final now = DateTime.now();
+    final weekStart = DateTime(now.year, now.month, now.day)
+        .subtract(Duration(days: now.weekday - 1));
+
+    return WeeklyGoal(
+      targetSessions: 5,
+      currentWeekSessionCount: 0,
+      weekStartDate: weekStart,
+    );
   }
 
   int _selectStudyDuration(int totalMinutes) {
