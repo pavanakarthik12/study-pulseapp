@@ -228,31 +228,35 @@ class _StudyTimerScreenState extends State<StudyTimerScreen>
 
     _isSavingSession = true;
     try {
+      final userId = FirebaseAuth.instance.currentUser?.uid;
+      if (userId == null || userId.isEmpty) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Please login to save sessions.'),
+            ),
+          );
+        }
+        return;
+      }
+
       final payload = <String, dynamic>{
+        'user_id': userId,
+        'subject': subject ?? 'General Focus',
         'session_duration': sessionDurationSeconds,
         'focus_score': focusScore,
+        'distraction_time': distractionSeconds,
+        'completed': true,
         'timestamp': FieldValue.serverTimestamp(),
         'session_started_at': Timestamp.fromDate(sessionStartedAt),
       };
-
-      final userId = FirebaseAuth.instance.currentUser?.uid;
-      if (userId != null && userId.isNotEmpty) {
-        payload['user_id'] = userId;
-      }
-
-      if (subject != null && subject.isNotEmpty) {
-        payload['subject'] = subject;
-      }
-
-      // Extra behavioral signal for future ML features.
-      payload['distraction_duration'] = distractionSeconds;
 
       await _firestore.collection('focus_sessions').add(payload);
     } catch (_) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('Session saved locally in app state only.'),
+            content: Text('Could not save session. Please try again.'),
           ),
         );
       }

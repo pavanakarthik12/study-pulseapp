@@ -6,13 +6,19 @@ class FocusSessionRecord {
     required this.focusScore,
     required this.durationSeconds,
     required this.timestamp,
+    required this.userId,
+    required this.completed,
     this.subject,
+    this.distractionSeconds,
   });
 
   final double focusScore;
   final int durationSeconds;
   final DateTime? timestamp;
+  final String? userId;
   final String? subject;
+  final int? distractionSeconds;
+  final bool completed;
 
   factory FocusSessionRecord.fromMap(Map<String, dynamic> data) {
     final rawTimestamp = data['timestamp'] ?? data['session_started_at'];
@@ -25,7 +31,10 @@ class FocusSessionRecord {
       focusScore: (data['focus_score'] as num?)?.toDouble() ?? 0,
       durationSeconds: (data['session_duration'] as num?)?.toInt() ?? 0,
       timestamp: parsedTimestamp,
+      userId: (data['user_id'] as String?)?.trim(),
       subject: (data['subject'] as String?)?.trim(),
+      distractionSeconds: (data['distraction_time'] as num?)?.toInt(),
+      completed: (data['completed'] as bool?) ?? true,
     );
   }
 }
@@ -701,6 +710,117 @@ class InsightsService {
     final hour12 = normalized % 12 == 0 ? 12 : normalized % 12;
     final suffix = normalized >= 12 ? 'PM' : 'AM';
     return '$hour12 $suffix';
+  }
+
+  /// Exports focus sessions as CSV for ML training datasets.
+  /// Returns CSV formatted string with headers and session data.
+  Future<String> exportSessionsAsCSV({
+    required String userId,
+    DateTime? startDate,
+    DateTime? endDate,
+  }) async {
+    try {
+      var query = _firestore
+          .collection('focus_sessions')
+          .where('user_id', isEqualTo: userId);
+
+      if (startDate != null) {
+        query = query.where('timestamp', isGreaterThanOrEqualTo: startDate);
+      }
+
+      if (endDate != null) {
+        query = query.where('timestamp', isLessThanOrEqualTo: endDate);
+      }
+
+      final snapshot = await query.orderBy('timestamp').get();
+      final sessions =
+          snapshot.docs.map((doc) => FocusSessionRecord.fromMap(doc.data())).toList();
+
+      if (sessions.isEmpty) {
+        return 'user_id,subject,session_duration,focus_score,distraction_time,completed,timestamp\n';
+      }
+
+      final buffer = StringBuffer();
+      buffer.writeln(
+          'user_id,subject,session_duration,focus_score,distraction_time,completed,timestamp');
+
+      for (final session in sessions) {
+        final timestamp = session.timestamp?.toIso8601String() ?? '';
+        final csvLine =
+            '"${session.userId}","${session.subject ?? 'N/A'}",${session.durationSeconds},${session.focusScore.toStringAsFixed(2)},${session.distractionSeconds ?? 0},${session.completed},"$timestamp"';
+        buffer.writeln(csvLine);
+      }
+
+      return buffer.toString();
+    } catch (_) {
+      return '';
+    }
+  }
+
+  /// Exports focus sessions as JSON for ML training datasets.
+  Future<String> exportSessionsAsJSON({
+    required String userId,
+    DateTime? startDate,
+    DateTime? endDate,
+  }) async {
+    try {
+      var query = _firestore
+          .collection('focus_sessions')
+          .where('user_id', isEqualTo: userId);
+
+      if (startDate != null) {
+        query = query.where('timestamp', isGreaterThanOrEqualTo: startDate);
+      }
+
+      if (endDate != null) {
+        query = query.where('timestamp', isLessThanOrEqualTo: endDate);
+      }
+
+      final snapshot = await query.orderBy('timestamp').get();
+      final sessionsList = snapshot.docs.map((doc) {
+        final data = doc.data();
+        return <String, dynamic>{
+          'user_id': data['user_id'],
+          'subject': data['subject'],
+          'session_duration': data['session_duration'],
+          'focus_score': data['focus_score'],
+          'distraction_time': data['distraction_time'],
+          'completed': data['completed'],
+          'timestamp': data['timestamp'] is Timestamp
+              ? (data['timestamp'] as Timestamp).toDate().toIso8601String()
+              : data['timestamp'],
+        };
+      }).toList();
+
+      return _jsonEncodeDataset(sessionsList);
+    } catch (_) {
+      return '[]';
+    }
+  }
+
+  String _jsonEncodeDataset(List<Map<String, dynamic>> sessions) {
+    final buffer = StringBuffer('[\n');
+    for (var i = 0; i < sessions.length; i++) {
+      final session = sessions[i];
+      buffer.write('  ');
+      buffer.write(_encodeJsonMap(session));
+      if (i < sessions.length - 1) {
+        buffer.write(',');
+      }
+      buffer.writeln();
+    }
+    buffer.write(']');
+    return buffer.toString();
+  }
+
+  String _encodeJsonMap(Map<String, dynamic> map) {
+    final entries = map.entries.map((e) {
+      final key = e.key;
+      final value = e.value;
+      final encodedValue = value is String ? '"${value.replaceAll('"', '\\"')}"' : value;
+      return '"$key":$encodedValue';
+    });
+    return '{${entries.join(',')}}';
   }
 }
 
