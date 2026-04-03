@@ -5,6 +5,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 
 import '../core/theme.dart';
 import '../services/insights_service.dart';
+import 'multi_block_timer_screen.dart';
 import 'widgets/modern_components.dart';
 
 class InsightsDashboardScreen extends StatefulWidget {
@@ -248,6 +249,30 @@ class _InsightsDashboardScreenState extends State<InsightsDashboardScreen> {
         });
       }
     }
+  }
+
+  void _startStudySession() {
+    if (_activePlanId == null || _trackedBlocks.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No study plan generated yet.')),
+      );
+      return;
+    }
+
+    final plan = TrackedStudyPlan(
+      id: _activePlanId!,
+      userId: FirebaseAuth.instance.currentUser?.uid ?? '',
+      blocks: _trackedBlocks,
+    );
+
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => MultiBlockTimerScreen(
+          plan: plan,
+          autostartBlocks: false,
+        ),
+      ),
+    );
   }
 
   Color _statusColor(PlanBlockStatus status) {
@@ -696,6 +721,14 @@ class _InsightsDashboardScreenState extends State<InsightsDashboardScreen> {
                       ),
                     ),
                   ),
+                if (_trackedBlocks.isNotEmpty) ...[
+                  const SizedBox(height: AppTheme.lg),
+                  PrimaryButton(
+                    label: 'Start Study Session',
+                    onPressed: _startStudySession,
+                    fullWidth: true,
+                  ),
+                ],
               ],
             ),
           ),

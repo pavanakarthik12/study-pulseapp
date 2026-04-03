@@ -1,0 +1,474 @@
+import 'dart:async';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/foundation.dart';
+
+import 'insights_service.dart';
+
+/// Timer execution state for a single block
+enum TimerBlockState { pending, running, paused, completed, skipped }
+
+/// Represents a block in execution with timing data
+class ExecutingBlock {
+  ExecutingBlock({
+    required this.blockId,
+    required this.subject,
+    required this.durationSeconds,
+    required this.type,
+    required this.state,
+    this.elapsedSeconds = 0,
+    this.pausedAtSeconds = 0,
+  });
+
+  final String blockId;
+  final String subject;
+  final int durationSeconds;
+  final PlanBlockType type;
+  TimerBlockState state;
+  int elapsedSeconds;
+  int pausedAtSeconds; // When paused, store the elapsed time
+
+  bool get isComplete => elapsedSeconds >= durationSeconds;
+  int get remainingSeconds => durationSeconds - elapsedSeconds;
+  double get progress => elapsedSeconds / durationSeconds;
+
+  Map<String, dynamic> toMap() {
+    return {
+      'block_id': blockId,
+      'subject': subject,
+      'duration_seconds': durationSeconds,
+      'type': type.name,
+      'state': state.name,
+      'elapsed_seconds': elapsedSeconds,
+      'paused_at_seconds': pausedAtSeconds,
+    };
+  }
+
+  factory ExecutingBlock.fromMap(Map<String, dynamic> data) {
+    return ExecutingBlock(
+      blockId: data['block_id'] as String,
+      subject: data['subject'] as String,
+      durationSeconds: data['duration_seconds'] as int,
+      type: data['type'] == 'study' ? PlanBlockType.study : PlanBlockType.shortBreak,
+      state: TimerBlockState.values.firstWhere(
+        (s) => s.name == data['state'],
+        orElse: () => TimerBlockState.pending,
+      ),
+      elapsedSeconds: data['elapsed_seconds'] as int? ?? 0,
+      pausedAtSeconds: data['paused_at_seconds'] as int? ?? 0,
+    );
+  }
+}
+
+/// Queue state for multi-block timer execution
+class TimerQueueState {
+  TimerQueueState({
+    required this.planId,
+    required this.userId,
+    required this.allBlocks,
+    required this.currentBlockIndex,
+    required this.startedAt,
+    this.pausedAt,
+    this.completedBlockCount = 0,
+    this.skippedBlockCount = 0,
+  });
+
+  final String planId;
+  final String userId;
+  final List<ExecutingBlock> allBlocks;
+  final int currentBlockIndex;
+  final DateTime startedAt;
+  DateTime? pausedAt;
+  int completedBlockCount;
+  int skippedBlockCount;
+
+  /// Get current block
+  ExecutingBlock? get currentBlock =>
+      currentBlockIndex >= 0 && currentBlockIndex < allBlocks.length
+          ? allBlocks[currentBlockIndex]
+          : null;
+
+  /// Get remaining blocks (not including current)
+  List<ExecutingBlock> get upcomingBlocks =>
+      allBlocks.sublist(currentBlockIndex + 1);
+
+  /// Check if plan is complete
+  bool get isComplete =>
+      currentBlockIndex >= allBlocks.length ||
+      (currentBlock?.state == TimerBlockState.completed &&
+          upcomingBlocks.isEmpty);
+
+  /// Get total plan duration in seconds
+  int get totalPlanDurationSeconds =>
+      allBlocks.fold<int>(0, (total, block) => total + block.durationSeconds);
+
+  /// Get total elapsed across all blocks
+  int get totalElapsedSeconds =>
+      allBlocks.fold<int>(0, (total, block) => total + block.elapsedSeconds);
+
+  /// Get overall progress
+  double get overallProgress => totalPlanDurationSeconds > 0 
+      ? totalElapsedSeconds / totalPlanDurationSeconds 
+      : 0.0;
+
+  Map<String, dynamic> toMap() {
+    return {
+      'plan_id': planId,
+      'user_id': userId,
+      'all_blocks': allBlocks.map((b) => b.toMap()).toList(),
+      'current_block_index': currentBlockIndex,
+      'started_at': startedAt.toIso8601String(),
+      'paused_at': pausedAt?.toIso8601String(),
+      'completed_block_count': completedBlockCount,
+      'skipped_block_count': skippedBlockCount,
+    };
+  }
+
+  factory TimerQueueState.fromMap(Map<String, dynamic> data) {
+    final blocksList = data['all_blocks'] as List?;
+    final blocks = blocksList != null
+        ? blocksList.map<ExecutingBlock>(
+            (b) => ExecutingBlock.fromMap(b as Map<String, dynamic>),
+          ).toList()
+        : <ExecutingBlock>[];
+
+    return TimerQueueState(
+      planId: data['plan_id'] as String,
+      userId: data['user_id'] as String,
+      allBlocks: blocks,
+      currentBlockIndex: data['current_block_index'] as int? ?? 0,
+      startedAt: DateTime.parse(data['started_at'] as String),
+      pausedAt: data['paused_at'] != null
+          ? DateTime.parse(data['paused_at'] as String)
+          : null,
+      completedBlockCount: data['completed_block_count'] as int? ?? 0,
+      skippedBlockCount: data['skipped_block_count'] as int? ?? 0,
+    );
+  }
+}
+
+/// Multi-block timer service for synchronized execution
+class TimerService {
+  static final TimerService _instance = TimerService._internal();
+
+  factory TimerService() {
+    return _instance;
+  }
+
+  TimerService._internal();
+
+  // State management
+  TimerQueueState? _queueState;
+  Timer? _executionTimer;
+  DateTime? _timerStartTime;
+  int _pausedElapsed = 0;
+
+  // Event streams
+  final _queueStateController = StreamController<TimerQueueState>.broadcast();
+  final _blockCompleteController = StreamController<ExecutingBlock>.broadcast();
+  final _planCompleteController = StreamController<String>.broadcast();
+
+  /// Getters
+  TimerQueueState? get queueState => _queueState;
+  bool get isRunning => _executionTimer?.isActive ?? false;
+  Stream<TimerQueueState> get queueStateStream => _queueStateController.stream;
+  Stream<ExecutingBlock> get blockCompleteStream =>
+      _blockCompleteController.stream;
+  Stream<String> get planCompleteStream => _planCompleteController.stream;
+
+  /// Initialize timer for a multi-block study plan
+  Future<void> initializePlan(
+    String planId,
+    String userId,
+    List<TrackedPlanBlock> trackedBlocks,
+  ) async {
+    final executingBlocks = <ExecutingBlock>[];
+    int blockId = 0;
+
+    for (final block in trackedBlocks) {
+      executingBlocks.add(
+        ExecutingBlock(
+          blockId: 'block_$blockId',
+          subject: block.subject,
+          durationSeconds: block.durationMinutes * 60,
+          type: block.type,
+          state: TimerBlockState.pending,
+        ),
+      );
+      blockId++;
+    }
+
+    _queueState = TimerQueueState(
+      planId: planId,
+      userId: userId,
+      allBlocks: executingBlocks,
+      currentBlockIndex: 0,
+      startedAt: DateTime.now(),
+    );
+
+    // Update first block to pending (ready to start)
+    if (_queueState!.currentBlock != null) {
+      _queueState!.currentBlock!.state = TimerBlockState.pending;
+    }
+
+    _emitQueueState();
+    await _persistQueueState();
+  }
+
+  /// Start timer execution
+  void startTimer() {
+    if (_queueState == null || isRunning) return;
+
+    final current = _queueState!.currentBlock;
+    if (current == null) {
+      _notifyPlanComplete();
+      return;
+    }
+
+    current.state = TimerBlockState.running;
+    _timerStartTime = DateTime.now();
+    _pausedElapsed = current.elapsedSeconds;
+
+    _executionTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      _updateTimerTick();
+    });
+
+    _emitQueueState();
+  }
+
+  /// Pause timer
+  void pauseTimer() {
+    if (_queueState == null || !isRunning) return;
+
+    _executionTimer?.cancel();
+    _executionTimer = null;
+
+    final current = _queueState!.currentBlock;
+    if (current != null) {
+      current.state = TimerBlockState.paused;
+      current.pausedAtSeconds = current.elapsedSeconds;
+      _queueState!.pausedAt = DateTime.now();
+    }
+
+    _emitQueueState();
+  }
+
+  /// Resume timer from pause
+  void resumeTimer() {
+    if (_queueState == null) return;
+
+    final current = _queueState!.currentBlock;
+    if (current?.state != TimerBlockState.paused) return;
+
+    current!.state = TimerBlockState.running;
+    _timerStartTime = DateTime.now();
+    _pausedElapsed = current.elapsedSeconds;
+    _queueState!.pausedAt = null;
+
+    _executionTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      _updateTimerTick();
+    });
+
+    _emitQueueState();
+  }
+
+  /// Skip current block
+  void skipBlock() {
+    if (_queueState == null) return;
+
+    final current = _queueState!.currentBlock;
+    if (current != null) {
+      current.state = TimerBlockState.skipped;
+      _queueState!.skippedBlockCount++;
+    }
+
+    _moveToNextBlock();
+  }
+
+  /// Complete current block manually
+  void completeBlock() {
+    if (_queueState == null) return;
+
+    final current = _queueState!.currentBlock;
+    if (current != null) {
+      current.elapsedSeconds = current.durationSeconds;
+      current.state = TimerBlockState.completed;
+      _queueState!.completedBlockCount++;
+      _blockCompleteController.add(current);
+    }
+
+    _moveToNextBlock();
+  }
+
+  /// Stop timer completely
+  void stopTimer() {
+    _executionTimer?.cancel();
+    _executionTimer = null;
+    _timerStartTime = null;
+    _pausedElapsed = 0;
+
+    if (_queueState?.currentBlock != null) {
+      _queueState!.currentBlock!.state = TimerBlockState.pending;
+    }
+
+    _emitQueueState();
+  }
+
+  /// Dispose resources
+  void dispose() {
+    stopTimer();
+    _queueStateController.close();
+    _blockCompleteController.close();
+    _planCompleteController.close();
+    _queueState = null;
+  }
+
+  /// Reset for new plan
+  void reset() {
+    dispose();
+    _queueState = null;
+    _executionTimer = null;
+    _timerStartTime = null;
+    _pausedElapsed = 0;
+  }
+
+  // Private methods
+
+  void _updateTimerTick() {
+    if (_queueState == null || _timerStartTime == null) return;
+
+    final current = _queueState!.currentBlock;
+    if (current == null) return;
+
+    final elapsed = DateTime.now().difference(_timerStartTime!).inSeconds;
+    current.elapsedSeconds = _pausedElapsed + elapsed;
+
+    // Check if block is complete
+    if (current.isComplete) {
+      current.state = TimerBlockState.completed;
+      _queueState!.completedBlockCount++;
+      _blockCompleteController.add(current);
+
+      _executionTimer?.cancel();
+      _executionTimer = null;
+
+      // Auto-move to next block
+      Future.delayed(const Duration(milliseconds: 500), _moveToNextBlock);
+    }
+
+    _emitQueueState();
+  }
+
+  void _moveToNextBlock() {
+    if (_queueState == null) return;
+
+    if (_timerStartTime != null) _queueState!.pausedAt = DateTime.now();
+
+    _executionTimer?.cancel();
+    _executionTimer = null;
+    _timerStartTime = null;
+    _pausedElapsed = 0;
+
+    if (_queueState!.currentBlockIndex < _queueState!.allBlocks.length - 1) {
+      _queueState = TimerQueueState(
+        planId: _queueState!.planId,
+        userId: _queueState!.userId,
+        allBlocks: _queueState!.allBlocks,
+        currentBlockIndex: _queueState!.currentBlockIndex + 1,
+        startedAt: _queueState!.startedAt,
+        pausedAt: _queueState!.pausedAt,
+        completedBlockCount: _queueState!.completedBlockCount,
+        skippedBlockCount: _queueState!.skippedBlockCount,
+      );
+      final nextBlock = _queueState!.currentBlock;
+
+      if (nextBlock != null) {
+        nextBlock.state = TimerBlockState.pending;
+        // Auto-start if it's a short break
+        if (nextBlock.type == PlanBlockType.shortBreak) {
+          Future.delayed(const Duration(milliseconds: 500), startTimer);
+        }
+      }
+    } else {
+      // Plan is complete
+      _notifyPlanComplete();
+    }
+
+    _emitQueueState();
+  }
+
+  void _notifyPlanComplete() {
+    _executionTimer?.cancel();
+    if (_queueState != null) {
+      _planCompleteController.add(_queueState!.planId);
+    }
+  }
+
+  void _emitQueueState() {
+    if (_queueState != null) {
+      _queueStateController.add(_queueState!);
+    }
+  }
+
+  Future<void> _persistQueueState() async {
+    if (_queueState == null) return;
+
+    try {
+      await FirebaseFirestore.instance
+          .collection('users')
+          .doc(_queueState!.userId)
+          .collection('timer_queue_state')
+          .doc(_queueState!.planId)
+          .set(_queueState!.toMap(), SetOptions(merge: true));
+    } catch (e) {
+      debugPrint('Error persisting timer queue state: $e');
+    }
+  }
+
+  /// Load persisted queue state
+  static Future<TimerQueueState?> loadPersisted(
+    String userId,
+    String planId,
+  ) async {
+    try {
+      final doc = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(userId)
+          .collection('timer_queue_state')
+          .doc(planId)
+          .get();
+
+      if (doc.exists) {
+        return TimerQueueState.fromMap(doc.data() ?? {});
+      }
+    } catch (e) {
+      debugPrint('Error loading timer queue state: $e');
+    }
+    return null;
+  }
+
+  /// Save session results to firestore
+  Future<void> saveSessionResults(String userId) async {
+    if (_queueState == null) return;
+
+    try {
+      final totalDuration = DateTime.now().difference(_queueState!.startedAt);
+      await FirebaseFirestore.instance
+          .collection('users')
+          .doc(userId)
+          .collection('focus_sessions')
+          .add({
+        'user_id': userId,
+        'plan_id': _queueState!.planId,
+        'session_started_at': _queueState!.startedAt,
+        'session_ended_at': DateTime.now(),
+        'total_duration_seconds': totalDuration.inSeconds,
+        'completed_blocks': _queueState!.completedBlockCount,
+        'skipped_blocks': _queueState!.skippedBlockCount,
+        'total_blocks': _queueState!.allBlocks.length,
+        'timestamp': FieldValue.serverTimestamp(),
+      });
+    } catch (e) {
+      debugPrint('Error saving session results: $e');
+    }
+  }
+}
