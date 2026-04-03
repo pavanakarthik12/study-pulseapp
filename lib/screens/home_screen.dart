@@ -1,11 +1,12 @@
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:flutter/material.dart';
 
+import '../core/theme.dart';
 import '../services/auth_service.dart';
 import 'focus_history_screen.dart';
 import 'insights_dashboard_screen.dart';
 import 'study_timer_screen.dart';
-import 'widgets/ui_shell.dart';
+import 'widgets/modern_components.dart';
 
 class HomeScreen extends StatelessWidget {
   const HomeScreen({super.key});
@@ -19,114 +20,95 @@ class HomeScreen extends StatelessWidget {
         : (user?.email ?? 'Unknown user');
 
     return Scaffold(
-      body: GradientBackdrop(
+      body: GradientBackground(
         child: SafeArea(
           child: Padding(
-            padding: const EdgeInsets.all(24),
+            padding: const EdgeInsets.all(AppTheme.lg),
             child: Column(
               children: [
                 Row(
-                  mainAxisAlignment: MainAxisAlignment.end,
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Welcome back',
+                          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                            color: AppTheme.textSecondary,
+                          ),
+                        ),
+                        const SizedBox(height: AppTheme.xs),
+                        Text(
+                          userLabel,
+                          style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ],
+                    ),
                     IconButton(
                       onPressed: authService.signOut,
-                      icon: const Icon(Icons.logout),
+                      icon: const Icon(Icons.logout_rounded),
                       tooltip: 'Logout',
+                      style: IconButton.styleFrom(
+                        backgroundColor: AppTheme.bgCard,
+                        foregroundColor: AppTheme.accentSecondary,
+                      ),
                     ),
                   ],
                 ),
                 const Spacer(),
-                Text(
-                  'Welcome back',
-                  style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                        fontWeight: FontWeight.w700,
-                      ),
-                )
-                    .animate()
-                    .fade(duration: 450.ms)
-                    .slideY(begin: 0.12, end: 0, duration: 450.ms),
-                const SizedBox(height: 10),
-                Text(
-                  userLabel,
-                  textAlign: TextAlign.center,
-                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                        color: Colors.white.withValues(alpha: 0.78),
-                      ),
-                )
-                    .animate(delay: 120.ms)
-                    .fade(duration: 450.ms)
-                    .slideY(begin: 0.12, end: 0, duration: 450.ms),
-                const SizedBox(height: 34),
-                SizedBox(
-                  width: 280,
-                  child: GradientActionButton(
-                    label: 'Start Smart Session',
-                    onPressed: () {
-                      Navigator.of(context).push(
-                        MaterialPageRoute(
-                          builder: (_) => const StudyTimerScreen(),
-                        ),
-                      );
-                    },
-                  ),
-                )
-                    .animate(delay: 220.ms)
-                    .fade(duration: 500.ms)
-                    .slideY(begin: 0.08, end: 0, duration: 500.ms),
-                const SizedBox(height: 12),
-                SizedBox(
-                  width: 280,
-                  child: OutlinedButton.icon(
-                    onPressed: () {
-                      Navigator.of(context).push(
-                        MaterialPageRoute(
-                          builder: (_) => const InsightsDashboardScreen(),
-                        ),
-                      );
-                    },
-                    icon: const Icon(Icons.insights_rounded),
-                    label: const Text('Open Insights Dashboard'),
-                    style: OutlinedButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(vertical: 14),
-                      side: BorderSide(
-                        color: Colors.white.withValues(alpha: 0.28),
-                      ),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(16),
-                      ),
-                    ),
-                  ),
-                )
-                    .animate(delay: 250.ms)
-                    .fade(duration: 500.ms)
-                    .slideY(begin: 0.08, end: 0, duration: 500.ms),
-                const SizedBox(height: 12),
-                SizedBox(
-                  width: 280,
-                  child: OutlinedButton.icon(
-                    onPressed: () {
-                      Navigator.of(context).push(
-                        MaterialPageRoute(
-                          builder: (_) => const FocusHistoryScreen(),
-                        ),
-                      );
-                    },
-                    icon: const Icon(Icons.analytics_outlined),
-                    label: const Text('View Focus History'),
-                    style: OutlinedButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(vertical: 14),
-                      side: BorderSide(
-                        color: Colors.white.withValues(alpha: 0.28),
-                      ),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(16),
-                      ),
-                    ),
-                  ),
-                )
-                    .animate(delay: 280.ms)
-                    .fade(duration: 500.ms)
-                    .slideY(begin: 0.08, end: 0, duration: 500.ms),
+                Column(
+                  children: [
+                    PrimaryButton(
+                      label: 'Start Smart Session',
+                      onPressed: () {
+                        Navigator.of(context).push(
+                          MaterialPageRoute(
+                            builder: (_) => const StudyTimerScreen(),
+                          ),
+                        );
+                      },
+                      fullWidth: true,
+                    )
+                        .animate(delay: 100.ms)
+                        .fade(duration: 450.ms)
+                        .slideY(begin: 0.1, end: 0, duration: 450.ms),
+                    const SizedBox(height: AppTheme.md),
+                    SecondaryButton(
+                      label: 'View Insights Dashboard',
+                      icon: Icons.insights_rounded,
+                      onPressed: () {
+                        Navigator.of(context).push(
+                          MaterialPageRoute(
+                            builder: (_) => const InsightsDashboardScreen(),
+                          ),
+                        );
+                      },
+                      fullWidth: true,
+                    )
+                        .animate(delay: 150.ms)
+                        .fade(duration: 450.ms)
+                        .slideY(begin: 0.1, end: 0, duration: 450.ms),
+                    const SizedBox(height: AppTheme.md),
+                    SecondaryButton(
+                      label: 'Focus History',
+                      icon: Icons.analytics_outlined,
+                      onPressed: () {
+                        Navigator.of(context).push(
+                          MaterialPageRoute(
+                            builder: (_) => const FocusHistoryScreen(),
+                          ),
+                        );
+                      },
+                      fullWidth: true,
+                    )
+                        .animate(delay: 200.ms)
+                        .fade(duration: 450.ms)
+                        .slideY(begin: 0.1, end: 0, duration: 450.ms),
+                  ],
+                ),
                 const Spacer(flex: 2),
               ],
             ),

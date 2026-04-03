@@ -3,8 +3,9 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
+import '../core/theme.dart';
 import '../services/insights_service.dart';
-import 'widgets/ui_shell.dart';
+import 'widgets/modern_components.dart';
 
 class InsightsDashboardScreen extends StatefulWidget {
   const InsightsDashboardScreen({super.key});
@@ -276,7 +277,7 @@ class _InsightsDashboardScreenState extends State<InsightsDashboardScreen> {
     final theme = Theme.of(context);
 
     return Scaffold(
-      body: GradientBackdrop(
+      body: GradientBackground(
         child: SafeArea(
           child: RefreshIndicator(
             onRefresh: () async {
@@ -285,7 +286,7 @@ class _InsightsDashboardScreenState extends State<InsightsDashboardScreen> {
             },
             child: ListView(
               physics: const AlwaysScrollableScrollPhysics(),
-              padding: const EdgeInsets.fromLTRB(20, 20, 20, 36),
+              padding: const EdgeInsets.fromLTRB(AppTheme.lg, AppTheme.lg, AppTheme.lg, 36),
               children: [
                 Row(
                   children: [
@@ -633,16 +634,17 @@ class _InsightsDashboardScreenState extends State<InsightsDashboardScreen> {
                           ),
                         ],
                       ),
-                      const SizedBox(height: 12),
+                      const SizedBox(height: AppTheme.md),
                       SizedBox(
                         width: double.infinity,
-                        child: GradientActionButton(
+                        child: PrimaryButton(
                           label: 'Generate Auto Plan',
                           isLoading: _isCreatingPlan,
                           onPressed: _generatePlan,
+                          fullWidth: true,
                         ),
                       ),
-                      const SizedBox(height: 12),
+                      const SizedBox(height: AppTheme.md),
                       Text(
                         'Auto plan rules: 25-45 min study blocks, 5-10 min breaks, tasks assigned sequentially.',
                         style: theme.textTheme.bodySmall?.copyWith(

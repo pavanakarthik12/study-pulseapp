@@ -2,8 +2,9 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:flutter/material.dart';
 
+import '../core/theme.dart';
 import '../services/auth_service.dart';
-import 'widgets/ui_shell.dart';
+import 'widgets/modern_components.dart';
 
 class SignupScreen extends StatefulWidget {
   const SignupScreen({super.key});
@@ -72,11 +73,11 @@ class _SignupScreenState extends State<SignupScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: GradientBackdrop(
+      body: GradientBackground(
         child: SafeArea(
           child: Center(
             child: SingleChildScrollView(
-              padding: const EdgeInsets.all(24),
+              padding: const EdgeInsets.all(AppTheme.lg),
               child: ConstrainedBox(
                 constraints: const BoxConstraints(maxWidth: 420),
                 child: Column(
@@ -85,43 +86,45 @@ class _SignupScreenState extends State<SignupScreen> {
                     Text(
                       'Study Pulse',
                       textAlign: TextAlign.center,
-                      style:
-                          Theme.of(context).textTheme.displaySmall?.copyWith(
-                                fontWeight: FontWeight.w700,
-                                letterSpacing: 0.5,
-                              ),
+                      style: Theme.of(context).textTheme.displaySmall?.copyWith(
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: 0.5,
+                      ),
                     )
                         .animate()
                         .fade(duration: 450.ms)
                         .slideY(begin: 0.12, end: 0, duration: 450.ms),
-                    const SizedBox(height: 8),
+                    const SizedBox(height: AppTheme.md),
                     Text(
                       'Create your account',
                       textAlign: TextAlign.center,
                       style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                            color: Colors.white.withValues(alpha: 0.8),
-                          ),
+                        color: AppTheme.textSecondary,
+                        fontWeight: FontWeight.w500,
+                      ),
                     )
                         .animate(delay: 120.ms)
                         .fade(duration: 450.ms)
                         .slideY(begin: 0.12, end: 0, duration: 450.ms),
-                    const SizedBox(height: 28),
-                    GlassCard(
+                    const SizedBox(height: AppTheme.xl),
+                    ModernCard(
                       child: Form(
                         key: _formKey,
                         child: Column(
                           children: [
-                            TextFormField(
+                            ModernTextField(
                               controller: _nameController,
-                              decoration:
-                                  const InputDecoration(hintText: 'Name'),
+                              label: 'Name',
+                              hint: 'Enter your name',
+                              prefixIcon: Icons.person_outline_rounded,
                             ),
-                            const SizedBox(height: 12),
-                            TextFormField(
+                            const SizedBox(height: AppTheme.lg),
+                            ModernTextField(
                               controller: _emailController,
+                              label: 'Email',
+                              hint: 'Enter your email',
                               keyboardType: TextInputType.emailAddress,
-                              decoration:
-                                  const InputDecoration(hintText: 'Email'),
+                              prefixIcon: Icons.mail_outline_rounded,
                               validator: (value) {
                                 if (value == null || value.trim().isEmpty) {
                                   return 'Enter your email';
@@ -129,12 +132,13 @@ class _SignupScreenState extends State<SignupScreen> {
                                 return null;
                               },
                             ),
-                            const SizedBox(height: 12),
-                            TextFormField(
+                            const SizedBox(height: AppTheme.lg),
+                            ModernTextField(
                               controller: _passwordController,
+                              label: 'Password',
+                              hint: 'Enter your password',
                               obscureText: true,
-                              decoration:
-                                  const InputDecoration(hintText: 'Password'),
+                              prefixIcon: Icons.lock_outline_rounded,
                               validator: (value) {
                                 if (value == null || value.length < 6) {
                                   return 'Password must be at least 6 characters';
@@ -142,18 +146,30 @@ class _SignupScreenState extends State<SignupScreen> {
                                 return null;
                               },
                             ),
-                            const SizedBox(height: 18),
-                            GradientActionButton(
-                              label: 'Start',
+                            const SizedBox(height: AppTheme.xl),
+                            PrimaryButton(
+                              label: 'Create Account',
                               isLoading: _isLoading,
                               onPressed: _signup,
+                              fullWidth: true,
                             ),
-                            const SizedBox(height: 8),
-                            TextButton(
-                              onPressed: _isLoading
-                                  ? null
-                                  : () => Navigator.of(context).pop(),
-                              child: const Text('Back to login'),
+                            const SizedBox(height: AppTheme.md),
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Text(
+                                  'Already have an account? ',
+                                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                                    color: AppTheme.textSecondary,
+                                  ),
+                                ),
+                                TertiaryButton(
+                                  label: 'Sign in',
+                                  onPressed: _isLoading
+                                      ? () {}
+                                      : () => Navigator.of(context).pop(),
+                                ),
+                              ],
                             ),
                           ],
                         ),

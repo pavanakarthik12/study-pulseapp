@@ -7,9 +7,10 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:just_audio/just_audio.dart';
-import 'package:percent_indicator/circular_percent_indicator.dart';
+import 'package:percent_indicator/percent_indicator.dart';
 
-import 'widgets/ui_shell.dart';
+import '../core/theme.dart';
+import 'widgets/modern_components.dart';
 
 class _FocusStream {
   const _FocusStream({required this.name, required this.urls});
@@ -354,107 +355,60 @@ class _StudyTimerScreenState extends State<StudyTimerScreen>
     final isFresh = _remainingSeconds == _defaultSeconds;
 
     return Scaffold(
-      body: GradientBackdrop(
+      body: GradientBackground(
         child: SafeArea(
           child: Stack(
             children: [
               Padding(
-                padding: const EdgeInsets.fromLTRB(24, 24, 24, 170),
+                padding: const EdgeInsets.fromLTRB(
+                  AppTheme.lg,
+                  AppTheme.lg,
+                  AppTheme.lg,
+                  170,
+                ),
                 child: Column(
                   children: [
                     Align(
                       alignment: Alignment.centerLeft,
                       child: IconButton(
                         onPressed: () => Navigator.of(context).pop(),
-                        icon: const Icon(Icons.arrow_back),
+                        icon: const Icon(Icons.arrow_back_rounded),
                         tooltip: 'Back',
                       ),
                     ),
                     const Spacer(),
-                    Container(
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        boxShadow: [
-                          BoxShadow(
-                            color:
-                                const Color(0xFF7C9BFF).withValues(alpha: 0.35),
-                            blurRadius: 42,
-                            spreadRadius: 10,
-                          ),
-                        ],
-                      ),
-                      child: CircularPercentIndicator(
-                        radius: 140,
-                        lineWidth: 14,
-                        animation: true,
-                        animateFromLastPercent: true,
-                        animationDuration: 900,
-                        circularStrokeCap: CircularStrokeCap.round,
-                        percent: _progress,
-                        backgroundColor: Colors.white.withValues(alpha: 0.1),
-                        progressColor: const Color(0xFF7C9BFF),
-                        center: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Text(
-                              _timeText,
-                              style: Theme.of(context)
-                                  .textTheme
-                                  .displaySmall
-                                  ?.copyWith(fontWeight: FontWeight.w700),
-                            ),
-                            const SizedBox(height: 6),
-                            Text(
-                              isFinished ? 'Session complete' : 'Focus timer',
-                              style: Theme.of(context)
-                                  .textTheme
-                                  .bodyMedium
-                                  ?.copyWith(
-                                    color: Colors.white.withValues(alpha: 0.75),
-                                  ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    )
-                        .animate()
-                        .fade(duration: 500.ms)
-                        .scale(
-                          begin: const Offset(0.92, 0.92),
-                          duration: 500.ms,
-                        ),
-                    const SizedBox(height: 40),
+                    _buildTimerDisplay(context, isFinished),
+                    const SizedBox(height: AppTheme.xl),
                     ConstrainedBox(
                       constraints: const BoxConstraints(maxWidth: 360),
-                      child: TextField(
+                      child: ModernTextField(
                         controller: _subjectController,
-                        decoration: const InputDecoration(
-                          hintText: 'Subject (optional)',
-                          prefixIcon: Icon(Icons.menu_book_rounded),
-                        ),
+                        label: 'Study Subject',
+                        hint: 'What are you focusing on?',
+                        prefixIcon: Icons.menu_book_rounded,
                       ),
                     )
                         .animate(delay: 80.ms)
                         .fade(duration: 420.ms)
                         .slideY(begin: 0.12, end: 0, duration: 420.ms),
-                    const SizedBox(height: 18),
+                    const SizedBox(height: AppTheme.xl),
                     Row(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
                         if (_isRunning)
-                          _TimerActionButton(
+                          _buildTimerButton(
                             icon: Icons.pause_rounded,
                             label: 'Pause',
                             onTap: _pause,
                           )
                         else
-                          _TimerActionButton(
+                          _buildTimerButton(
                             icon: Icons.play_arrow_rounded,
                             label: isFresh ? 'Start' : 'Resume',
                             onTap: _start,
                           ),
-                        const SizedBox(width: 14),
-                        _TimerActionButton(
+                        const SizedBox(width: AppTheme.lg),
+                        _buildTimerButton(
                           icon: Icons.stop_rounded,
                           label: 'Stop',
                           onTap: _stop,
@@ -469,15 +423,108 @@ class _StudyTimerScreenState extends State<StudyTimerScreen>
                 ),
               ),
               Positioned(
-                left: 18,
-                right: 18,
-                bottom: 18,
+                left: AppTheme.lg,
+                right: AppTheme.lg,
+                bottom: AppTheme.lg,
                 child: _FocusRadioCard(
                   nowPlaying: _nowPlayingLabel,
                   isPlaying: _isAudioPlaying,
                   isSwitching: _isSwitchingStream,
                   onTogglePlay: _toggleAudio,
                   onSwitchStream: _switchStream,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTimerDisplay(BuildContext context, bool isFinished) {
+    return Container(
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        boxShadow: [
+          BoxShadow(
+            color: AppTheme.accentPrimary.withValues(alpha: 0.3),
+            blurRadius: 42,
+            spreadRadius: 10,
+          ),
+        ],
+      ),
+      child: CircularPercentIndicator(
+        radius: 120,
+        lineWidth: 12,
+        animation: true,
+        animateFromLastPercent: true,
+        animationDuration: 900,
+        circularStrokeCap: CircularStrokeCap.round,
+        percent: _progress,
+        backgroundColor: AppTheme.bgCard,
+        progressColor: AppTheme.accentSecondary,
+        center: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              _timeText,
+              style: Theme.of(context).textTheme.displayMedium?.copyWith(
+                fontWeight: FontWeight.w700,
+                color: AppTheme.textPrimary,
+              ),
+            ),
+            const SizedBox(height: AppTheme.md),
+            Text(
+              isFinished ? '✓ Complete' : 'Focus time',
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                color: AppTheme.textSecondary,
+              ),
+            ),
+          ],
+        ),
+      ),
+    )
+        .animate()
+        .fade(duration: 500.ms)
+        .scale(begin: const Offset(0.92, 0.92), duration: 500.ms);
+  }
+
+  Widget _buildTimerButton({
+    required IconData icon,
+    required String label,
+    required VoidCallback onTap,
+  }) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(AppTheme.radiusLarge),
+        child: Container(
+          padding: const EdgeInsets.symmetric(
+            horizontal: AppTheme.xl,
+            vertical: AppTheme.lg,
+          ),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(AppTheme.radiusLarge),
+            color: AppTheme.bgCard,
+            border: Border.all(
+              color: AppTheme.bgCardLight,
+              width: 1,
+            ),
+          ),
+          child: Column(
+            children: [
+              Icon(
+                icon,
+                color: AppTheme.accentSecondary,
+                size: 28,
+              ),
+              const SizedBox(height: AppTheme.sm),
+              Text(
+                label,
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: AppTheme.textPrimary,
+                  fontWeight: FontWeight.w600,
                 ),
               ),
             ],
@@ -505,94 +552,95 @@ class _FocusRadioCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(18),
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 280),
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(18),
-            color: Colors.white.withValues(alpha: 0.12),
-            border: Border.all(
-              color: Colors.white.withValues(alpha: 0.24),
-            ),
-            boxShadow: [
-              BoxShadow(
-                color: const Color(0xFF57D2FF)
-                    .withValues(alpha: isPlaying ? 0.28 : 0.08),
-                blurRadius: isPlaying ? 24 : 8,
-                spreadRadius: isPlaying ? 2 : 0,
-              ),
-            ],
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 280),
+      padding: const EdgeInsets.symmetric(
+        horizontal: AppTheme.md,
+        vertical: AppTheme.md,
+      ),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(AppTheme.radiusLarge),
+        color: AppTheme.bgCard,
+        border: Border.all(
+          color: AppTheme.bgCardLight,
+          width: 1,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: AppTheme.accentSecondary
+                .withValues(alpha: isPlaying ? 0.28 : 0.08),
+            blurRadius: isPlaying ? 24 : 8,
+            spreadRadius: isPlaying ? 2 : 0,
           ),
-          child: Row(
-            children: [
-              Expanded(
-                child: AnimatedSwitcher(
-                  duration: const Duration(milliseconds: 280),
-                  transitionBuilder: (child, animation) {
-                    return FadeTransition(
-                      opacity: animation,
-                      child: SlideTransition(
-                        position: Tween<Offset>(
-                          begin: const Offset(0.06, 0),
-                          end: Offset.zero,
-                        ).animate(animation),
-                        child: child,
-                      ),
-                    );
-                  },
-                  child: Text(
-                    nowPlaying,
-                    key: ValueKey<String>(nowPlaying),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: Theme.of(context).textTheme.titleMedium,
+        ],
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: AnimatedSwitcher(
+              duration: const Duration(milliseconds: 280),
+              transitionBuilder: (child, animation) {
+                return FadeTransition(
+                  opacity: animation,
+                  child: SlideTransition(
+                    position: Tween<Offset>(
+                      begin: const Offset(0.06, 0),
+                      end: Offset.zero,
+                    ).animate(animation),
+                    child: child,
                   ),
+                );
+              },
+              child: Text(
+                nowPlaying,
+                key: ValueKey<String>(nowPlaying),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                  fontWeight: FontWeight.w600,
+                  color: AppTheme.textPrimary,
                 ),
               ),
-              const SizedBox(width: 10),
-              _MiniActionButton(
-                icon: isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded,
-                onTap: onTogglePlay,
-              ),
-              const SizedBox(width: 10),
-              AnimatedSwitcher(
-                duration: const Duration(milliseconds: 220),
-                child: isSwitching
-                    ? Container(
-                        key: const ValueKey<String>('switching'),
-                        height: 40,
-                        width: 40,
-                        decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(12),
-                          color: Colors.white.withValues(alpha: 0.12),
-                          border: Border.all(
-                            color: Colors.white.withValues(alpha: 0.2),
-                          ),
-                        ),
-                        padding: const EdgeInsets.all(10),
-                        child: const CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : _MiniActionButton(
-                        key: const ValueKey<String>('switch'),
-                        icon: Icons.swap_horiz_rounded,
-                        onTap: onSwitchStream,
-                      ),
-              ),
-            ],
-          ),
-        )
-            .animate(target: isPlaying ? 1 : 0)
-            .scale(
-              begin: const Offset(0.99, 0.99),
-              end: const Offset(1.0, 1.0),
-              duration: 260.ms,
             ),
+          ),
+          const SizedBox(width: AppTheme.md),
+          _MiniActionButton(
+            icon: isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded,
+            onTap: onTogglePlay,
+          ),
+          const SizedBox(width: AppTheme.md),
+          AnimatedSwitcher(
+            duration: const Duration(milliseconds: 220),
+            child: isSwitching
+                ? Container(
+              key: const ValueKey<String>('switching'),
+              height: 40,
+              width: 40,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
+                color: AppTheme.bgCardLight,
+              ),
+              padding: const EdgeInsets.all(AppTheme.sm),
+              child: const CircularProgressIndicator(
+                strokeWidth: 2,
+                valueColor: AlwaysStoppedAnimation(AppTheme.accentSecondary),
+              ),
+            )
+                : _MiniActionButton(
+              key: const ValueKey<String>('switch'),
+              icon: Icons.swap_horiz_rounded,
+              onTap: onSwitchStream,
+            ),
+          ),
+        ],
       ),
-    );
+    )
+        .animate(target: isPlaying ? 1 : 0)
+        .scale(
+          begin: const Offset(0.99, 0.99),
+          end: const Offset(1.0, 1.0),
+          duration: 260.ms,
+        );
   }
 }
 
@@ -623,61 +671,17 @@ class _MiniActionButtonState extends State<_MiniActionButton> {
           height: 40,
           width: 40,
           decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(12),
-            color: Colors.white.withValues(alpha: 0.12),
+            borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
+            color: AppTheme.bgCardLight,
             border: Border.all(
-              color: Colors.white.withValues(alpha: 0.2),
+              color: AppTheme.bgCardLight,
+              width: 1,
             ),
           ),
-          child: Icon(widget.icon, size: 22),
-        ),
-      ),
-    );
-  }
-}
-
-class _TimerActionButton extends StatefulWidget {
-  const _TimerActionButton({
-    required this.icon,
-    required this.label,
-    required this.onTap,
-  });
-
-  final IconData icon;
-  final String label;
-  final VoidCallback onTap;
-
-  @override
-  State<_TimerActionButton> createState() => _TimerActionButtonState();
-}
-
-class _TimerActionButtonState extends State<_TimerActionButton> {
-  bool _pressed = false;
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTapDown: (_) => setState(() => _pressed = true),
-      onTapCancel: () => setState(() => _pressed = false),
-      onTapUp: (_) => setState(() => _pressed = false),
-      onTap: widget.onTap,
-      child: AnimatedScale(
-        duration: const Duration(milliseconds: 140),
-        scale: _pressed ? 0.94 : 1,
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(16),
-            color: Colors.white.withValues(alpha: 0.1),
-            border: Border.all(color: Colors.white.withValues(alpha: 0.2)),
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(widget.icon, size: 20),
-              const SizedBox(width: 8),
-              Text(widget.label),
-            ],
+          child: Icon(
+            widget.icon,
+            size: 20,
+            color: AppTheme.accentSecondary,
           ),
         ),
       ),

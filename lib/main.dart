@@ -1,9 +1,9 @@
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
 
 import 'auth_gate.dart';
+import 'core/theme.dart';
 import 'firebase_options.dart';
 import 'screens/study_timer_screen.dart';
 
@@ -20,37 +20,31 @@ class StartupErrorView extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFF0B0B0B),
+      backgroundColor: AppTheme.bgDeepDark,
       body: Center(
         child: Padding(
-          padding: const EdgeInsets.all(24),
+          padding: const EdgeInsets.all(AppTheme.lg),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const Text(
+              Text(
                 'Firebase Setup Required',
-                style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 22,
+                style: Theme.of(context).textTheme.headlineMedium?.copyWith(
                   fontWeight: FontWeight.w700,
                 ),
                 textAlign: TextAlign.center,
               ),
-              const SizedBox(height: 12),
+              const SizedBox(height: AppTheme.md),
               Text(
                 message,
-                style: TextStyle(
-                  color: Colors.white.withValues(alpha: 0.82),
-                  fontSize: 14,
-                ),
+                style: Theme.of(context).textTheme.bodyMedium,
                 textAlign: TextAlign.center,
               ),
-              const SizedBox(height: 16),
+              const SizedBox(height: AppTheme.lg),
               Text(
                 'Add android/app/google-services.json and ios/Runner/GoogleService-Info.plist, then restart.',
-                style: TextStyle(
-                  color: Colors.white.withValues(alpha: 0.7),
-                  fontSize: 13,
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: AppTheme.textSecondary,
                 ),
                 textAlign: TextAlign.center,
               ),
@@ -70,43 +64,41 @@ class OfflineModeScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFF0B0B0B),
+      backgroundColor: AppTheme.bgDeepDark,
       body: SafeArea(
         child: Padding(
-          padding: const EdgeInsets.all(24),
+          padding: const EdgeInsets.all(AppTheme.lg),
           child: Column(
             children: [
               const Spacer(),
               Text(
                 'Study Pulse',
-                style: Theme.of(context).textTheme.headlineLarge?.copyWith(
-                      fontWeight: FontWeight.w700,
-                    ),
-                textAlign: TextAlign.center,
-              ),
-              const SizedBox(height: 12),
-              Text(
-                'Running in offline mode',
-                style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                      color: Colors.white.withValues(alpha: 0.84),
-                    ),
-                textAlign: TextAlign.center,
-              ),
-              const SizedBox(height: 12),
-              Text(
-                'Authentication is unavailable until Firebase config files are added.',
-                style: TextStyle(
-                  color: Colors.white.withValues(alpha: 0.68),
-                  fontSize: 13,
+                style: Theme.of(context).textTheme.displaySmall?.copyWith(
+                  fontWeight: FontWeight.w700,
                 ),
                 textAlign: TextAlign.center,
               ),
-              const SizedBox(height: 24),
+              const SizedBox(height: AppTheme.md),
+              Text(
+                'Running in offline mode',
+                style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                  color: AppTheme.textSecondary,
+                ),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: AppTheme.md),
+              Text(
+                'Authentication is unavailable until Firebase config files are added.',
+                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                  color: AppTheme.textTertiary,
+                ),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: AppTheme.xl),
               Text(
                 reason,
-                style: TextStyle(
-                  color: Colors.white.withValues(alpha: 0.55),
-                  fontSize: 11,
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: AppTheme.textTertiary,
                 ),
                 textAlign: TextAlign.center,
               ),
@@ -115,7 +107,7 @@ class OfflineModeScreen extends StatelessWidget {
                 width: double.infinity,
                 child: ElevatedButton(
                   style: ElevatedButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    padding: const EdgeInsets.symmetric(vertical: AppTheme.lg),
                   ),
                   onPressed: () {
                     Navigator.of(context).push(
@@ -127,11 +119,13 @@ class OfflineModeScreen extends StatelessWidget {
                   child: const Text('Start Focus Session'),
                 ),
               ),
-              const SizedBox(height: 10),
-              const Text(
+              const SizedBox(height: AppTheme.md),
+              Text(
                 'Add android/app/google-services.json and ios/Runner/GoogleService-Info.plist to re-enable login.',
                 textAlign: TextAlign.center,
-                style: TextStyle(color: Colors.white54, fontSize: 12),
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: AppTheme.textTertiary,
+                ),
               ),
             ],
           ),
@@ -200,9 +194,9 @@ class _StartupLoadingView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const Scaffold(
-      backgroundColor: Color(0xFF0B0B0B),
-      body: Center(
+    return Scaffold(
+      backgroundColor: AppTheme.bgDeepDark,
+      body: const Center(
         child: CircularProgressIndicator(),
       ),
     );
@@ -217,40 +211,7 @@ class StudyPulseApp extends StatelessWidget {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       title: 'Study Pulse',
-      theme: ThemeData(
-        brightness: Brightness.dark,
-        scaffoldBackgroundColor: Colors.transparent,
-        textTheme: GoogleFonts.poppinsTextTheme(
-          ThemeData.dark().textTheme,
-        ),
-        colorScheme: const ColorScheme.dark(
-          primary: Color(0xFF7C9BFF),
-          secondary: Color(0xFF57D2FF),
-          surface: Color(0xFF121212),
-        ),
-        inputDecorationTheme: InputDecorationTheme(
-          filled: true,
-          fillColor: Colors.white.withValues(alpha: 0.09),
-          hintStyle: TextStyle(color: Colors.white.withValues(alpha: 0.65)),
-          border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(16),
-            borderSide: BorderSide.none,
-          ),
-          enabledBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(16),
-            borderSide: BorderSide(
-              color: Colors.white.withValues(alpha: 0.12),
-            ),
-          ),
-          focusedBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(16),
-            borderSide: const BorderSide(
-              color: Color(0xFF7C9BFF),
-              width: 1.2,
-            ),
-          ),
-        ),
-      ),
+      theme: AppTheme.buildTheme(),
       home: const AppBootstrap(),
     );
   }

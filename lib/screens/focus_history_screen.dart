@@ -2,7 +2,8 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:percent_indicator/circular_percent_indicator.dart';
 
-import 'widgets/ui_shell.dart';
+import '../core/theme.dart';
+import 'widgets/modern_components.dart';
 
 class FocusHistoryScreen extends StatelessWidget {
   const FocusHistoryScreen({super.key});
@@ -40,20 +41,20 @@ class FocusHistoryScreen extends StatelessWidget {
         .limit(10);
 
     return Scaffold(
-      body: GradientBackdrop(
+      body: GradientBackground(
         child: SafeArea(
           child: Padding(
-            padding: const EdgeInsets.all(20),
+            padding: const EdgeInsets.all(AppTheme.lg),
             child: Column(
               children: [
                 Row(
                   children: [
                     IconButton(
                       onPressed: () => Navigator.of(context).pop(),
-                      icon: const Icon(Icons.arrow_back),
+                      icon: const Icon(Icons.arrow_back_rounded),
                       tooltip: 'Back',
                     ),
-                    const SizedBox(width: 8),
+                    const SizedBox(width: AppTheme.md),
                     Text(
                       'Focus History',
                       style: Theme.of(context).textTheme.headlineSmall?.copyWith(
