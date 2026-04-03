@@ -18,6 +18,10 @@ class AuthGate extends StatelessWidget {
           );
         }
 
+        if (snapshot.hasError) {
+          return const HomeScreen();
+        }
+
         if (snapshot.hasData) {
           return const HomeScreen();
         }

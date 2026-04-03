@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'auth_gate.dart';
 import 'core/theme.dart';
 import 'firebase_options.dart';
+import 'screens/home_screen.dart';
 import 'screens/study_timer_screen.dart';
 
 void main() {
@@ -180,7 +181,7 @@ class _AppBootstrapState extends State<AppBootstrap> {
 
         final errorMessage = snapshot.data;
         if (errorMessage != null) {
-          return OfflineModeScreen(reason: errorMessage);
+          return const HomeScreen();
         }
 
         return const AuthGate();
