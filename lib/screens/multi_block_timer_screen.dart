@@ -360,6 +360,15 @@ class _MultiBlockTimerScreenState extends State<MultiBlockTimerScreen>
     _audioPlayer.stop();
     await _timerService.endPlanEarly();
 
+    try {
+      final user = FirebaseAuth.instance.currentUser;
+      if (user != null) {
+        await _timerService.saveSessionResults(user.uid);
+      }
+    } catch (e) {
+      debugPrint('Error saving ended-plan session: $e');
+    }
+
     if (!mounted) {
       return;
     }
