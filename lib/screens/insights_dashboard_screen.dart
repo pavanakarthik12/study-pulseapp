@@ -12,7 +12,8 @@ class InsightsDashboardScreen extends StatefulWidget {
   const InsightsDashboardScreen({super.key});
 
   @override
-  State<InsightsDashboardScreen> createState() => _InsightsDashboardScreenState();
+  State<InsightsDashboardScreen> createState() =>
+      _InsightsDashboardScreenState();
 }
 
 class _InsightsDashboardScreenState extends State<InsightsDashboardScreen> {
@@ -27,6 +28,8 @@ class _InsightsDashboardScreenState extends State<InsightsDashboardScreen> {
   final TextEditingController _subjectsController = TextEditingController();
 
   late Future<_DashboardData> _insightsFuture;
+  StreamSubscription<String>? _sessionUpdatesSubscription;
+  StreamSubscription<TrackedStudyPlan?>? _planSubscription;
 
   TimeOfDay _startTime = const TimeOfDay(hour: 18, minute: 0);
   TimeOfDay _endTime = const TimeOfDay(hour: 21, minute: 0);
@@ -35,22 +38,106 @@ class _InsightsDashboardScreenState extends State<InsightsDashboardScreen> {
   bool _isCreatingPlan = false;
   final Set<int> _updatingBlockIndexes = <int>{};
 
+  bool _isLocalPlanId(String planId) => planId.startsWith('local_');
+
   @override
   void initState() {
     super.initState();
     _insightsFuture = _loadInsights();
+
+    _sessionUpdatesSubscription = InsightsService.watchSessionUpdates().listen((
+      uid,
+    ) {
+      final currentUid = FirebaseAuth.instance.currentUser?.uid;
+      if (!mounted || currentUid == null || uid != currentUid) {
+        return;
+      }
+
+      setState(() {
+        _insightsFuture = _loadInsights();
+      });
+    });
+
+    unawaited(_restoreLatestPlan());
   }
 
   @override
   void dispose() {
+    _sessionUpdatesSubscription?.cancel();
+    _planSubscription?.cancel();
     _subjectsController.dispose();
     super.dispose();
   }
 
+  Future<void> _restoreLatestPlan() async {
+    final userId = FirebaseAuth.instance.currentUser?.uid;
+    if (userId == null || userId.isEmpty) {
+      return;
+    }
+
+    try {
+      final latestPlan = await _insightsService.fetchLatestPlan(userId);
+      if (!mounted || latestPlan == null || latestPlan.blocks.isEmpty) {
+        return;
+      }
+
+      setState(() {
+        _activePlanId = latestPlan.id;
+        _trackedBlocks = latestPlan.blocks;
+      });
+
+      _subscribeToPlan(latestPlan.id);
+    } catch (_) {
+      // Best-effort restore only.
+    }
+  }
+
+  void _subscribeToPlan(String planId) {
+    _planSubscription?.cancel();
+    _planSubscription = _insightsService.watchStudyPlan(planId).listen((plan) {
+      if (!mounted || plan == null) {
+        return;
+      }
+
+      setState(() {
+        _activePlanId = plan.id;
+        _trackedBlocks = plan.blocks;
+      });
+    });
+  }
+
   Future<_DashboardData> _loadInsights() async {
     try {
-      final sessions = await _insightsService.fetchRecentSessions();
       final userId = FirebaseAuth.instance.currentUser?.uid;
+      if (userId == null || userId.isEmpty) {
+        return _DashboardData(
+          summary: const InsightsSummary(
+            totalStudySeconds: 0,
+            averageFocusScore: 0,
+            bestSessionTimeLabel: 'No sessions yet',
+            bestFocusWindowLabel: 'Not enough data yet',
+            timeOfDayStats: <TimeOfDayStats>[],
+            totalSessions: 0,
+          ),
+          weeklyTrend: const <DailyTrendPoint>[],
+          streak: const StreakData(
+            currentStreak: 0,
+            longestStreak: 0,
+            lastSessionDate: null,
+            hasSevenDayBadge: false,
+            hasThirtyDayBadge: false,
+          ),
+          weeklyGoal: WeeklyGoal(
+            targetSessions: 5,
+            currentWeekSessionCount: 0,
+            weekStartDate: DateTime.now(),
+          ),
+        );
+      }
+
+      final sessions = await _insightsService.fetchRecentSessions(
+        userId: userId,
+      );
 
       final summary = _insightsService.buildInsightsSummary(sessions);
       final trend = _insightsService.buildRecentDailyTrend(sessions);
@@ -58,9 +145,7 @@ class _InsightsDashboardScreenState extends State<InsightsDashboardScreen> {
       final streak = _insightsService.calculateStreakFromSessions(sessions);
       final goal = _insightsService.calculateWeeklyGoal(sessions);
 
-      if (userId != null && userId.isNotEmpty) {
-        unawaited(_insightsService.updateStreakData(userId, streak));
-      }
+      unawaited(_insightsService.updateStreakData(userId, streak));
 
       return _DashboardData(
         summary: summary,
@@ -150,14 +235,36 @@ class _InsightsDashboardScreenState extends State<InsightsDashboardScreen> {
       return;
     }
 
+    final localTrackedBlocks = blocks
+        .asMap()
+        .entries
+        .map(
+          (entry) => TrackedPlanBlock(
+            subject: entry.value.subject ?? 'Short Break',
+            durationMinutes: entry.value.durationMinutes,
+            status: PlanBlockStatus.pending,
+            type: entry.value.type,
+            orderIndex: entry.key,
+          ),
+        )
+        .toList();
+
+    final localPlanId = 'local_${DateTime.now().millisecondsSinceEpoch}';
+
     final userId = FirebaseAuth.instance.currentUser?.uid;
     if (userId == null || userId.isEmpty) {
       if (!mounted) {
         return;
       }
+      setState(() {
+        _activePlanId = localPlanId;
+        _trackedBlocks = localTrackedBlocks;
+      });
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Please login to save and track plan progress.'),
+          content: Text(
+            'Plan generated locally. Login to sync and track progress.',
+          ),
         ),
       );
       return;
@@ -181,13 +288,22 @@ class _InsightsDashboardScreenState extends State<InsightsDashboardScreen> {
         _activePlanId = trackedPlan.id;
         _trackedBlocks = trackedPlan.blocks;
       });
-    } catch (_) {
+      _subscribeToPlan(trackedPlan.id);
+    } catch (e) {
+      debugPrint('Could not sync plan to Firestore: $e');
       if (!mounted) {
         return;
       }
+      _planSubscription?.cancel();
+      setState(() {
+        _activePlanId = localPlanId;
+        _trackedBlocks = localTrackedBlocks;
+      });
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Could not save plan to Firestore right now.'),
+          content: Text(
+            'Plan generated locally. Firestore sync is unavailable right now.',
+          ),
         ),
       );
     } finally {
@@ -230,6 +346,13 @@ class _InsightsDashboardScreenState extends State<InsightsDashboardScreen> {
       _trackedBlocks = optimistic;
     });
 
+    if (_isLocalPlanId(planId)) {
+      setState(() {
+        _updatingBlockIndexes.remove(index);
+      });
+      return;
+    }
+
     try {
       await _insightsService.updateBlockStatus(
         planId: planId,
@@ -242,11 +365,15 @@ class _InsightsDashboardScreenState extends State<InsightsDashboardScreen> {
         return;
       }
       setState(() {
-        _trackedBlocks = previous;
+        _activePlanId = 'local_${DateTime.now().millisecondsSinceEpoch}';
+        _trackedBlocks = optimistic;
       });
+      _planSubscription?.cancel();
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Status update failed. Please try again.'),
+          content: Text(
+            'Status saved locally. Cloud sync is unavailable right now.',
+          ),
         ),
       );
     } finally {
@@ -274,17 +401,17 @@ class _InsightsDashboardScreenState extends State<InsightsDashboardScreen> {
 
     Navigator.of(context).push(
       MaterialPageRoute(
-        builder: (_) => MultiBlockTimerScreen(
-          plan: plan,
-          autostartBlocks: false,
-        ),
+        builder: (_) =>
+            MultiBlockTimerScreen(plan: plan, autostartBlocks: false),
       ),
     );
   }
 
   Color _statusColor(PlanBlockStatus status) {
     switch (status) {
-      case PlanBlockStatus.done:
+      case PlanBlockStatus.active:
+        return const Color(0xFF4F7CFF);
+      case PlanBlockStatus.completed:
         return const Color(0xFF4BD37B);
       case PlanBlockStatus.skipped:
         return const Color(0xFFFF6B6B);
@@ -295,8 +422,10 @@ class _InsightsDashboardScreenState extends State<InsightsDashboardScreen> {
 
   String _statusLabel(PlanBlockStatus status) {
     switch (status) {
-      case PlanBlockStatus.done:
-        return 'Done';
+      case PlanBlockStatus.active:
+        return 'Active';
+      case PlanBlockStatus.completed:
+        return 'Completed';
       case PlanBlockStatus.skipped:
         return 'Skipped';
       case PlanBlockStatus.pending:
@@ -373,12 +502,15 @@ class _InsightsDashboardScreenState extends State<InsightsDashboardScreen> {
                     return _SectionContainer(
                       child: Text(
                         'Could not load insights right now.',
-                        style: theme.textTheme.bodyLarge?.copyWith(color: _textPrimary),
+                        style: theme.textTheme.bodyLarge?.copyWith(
+                          color: _textPrimary,
+                        ),
                       ),
                     );
                   }
 
-                  final payload = snapshot.data ??
+                  final payload =
+                      snapshot.data ??
                       _DashboardData(
                         summary: const InsightsSummary(
                           totalStudySeconds: 0,
@@ -422,17 +554,17 @@ class _InsightsDashboardScreenState extends State<InsightsDashboardScreen> {
                                   children: [
                                     Text(
                                       '${streak.currentStreak}-Day Streak',
-                                      style: theme.textTheme.headlineSmall?.copyWith(
-                                        fontWeight: FontWeight.w600,
-                                        color: _textPrimary,
-                                      ),
+                                      style: theme.textTheme.headlineSmall
+                                          ?.copyWith(
+                                            fontWeight: FontWeight.w600,
+                                            color: _textPrimary,
+                                          ),
                                     ),
                                     const SizedBox(height: 4),
                                     Text(
                                       'Longest: ${streak.longestStreak} days',
-                                      style: theme.textTheme.bodyMedium?.copyWith(
-                                        color: _textSecondary,
-                                      ),
+                                      style: theme.textTheme.bodyMedium
+                                          ?.copyWith(color: _textSecondary),
                                     ),
                                   ],
                                 ),
@@ -440,7 +572,8 @@ class _InsightsDashboardScreenState extends State<InsightsDashboardScreen> {
                                   children: [
                                     if (streak.hasSevenDayBadge)
                                       _BadgeChip(label: '7D'),
-                                    if (streak.hasSevenDayBadge && streak.hasThirtyDayBadge)
+                                    if (streak.hasSevenDayBadge &&
+                                        streak.hasThirtyDayBadge)
                                       const SizedBox(width: 8),
                                     if (streak.hasThirtyDayBadge)
                                       _BadgeChip(label: '30D'),
@@ -459,23 +592,26 @@ class _InsightsDashboardScreenState extends State<InsightsDashboardScreen> {
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
                                   Row(
-                                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                    mainAxisAlignment:
+                                        MainAxisAlignment.spaceBetween,
                                     children: [
                                       Text(
                                         'Weekly Goal',
-                                        style: theme.textTheme.titleMedium?.copyWith(
-                                          fontWeight: FontWeight.w600,
-                                          color: _textPrimary,
-                                        ),
+                                        style: theme.textTheme.titleMedium
+                                            ?.copyWith(
+                                              fontWeight: FontWeight.w600,
+                                              color: _textPrimary,
+                                            ),
                                       ),
                                       Text(
                                         '${goal.currentWeekSessionCount}/${goal.targetSessions}',
-                                        style: theme.textTheme.titleMedium?.copyWith(
-                                          fontWeight: FontWeight.w600,
-                                          color: goal.isCompleted
-                                              ? const Color(0xFF4BD37B)
-                                              : _accent,
-                                        ),
+                                        style: theme.textTheme.titleMedium
+                                            ?.copyWith(
+                                              fontWeight: FontWeight.w600,
+                                              color: goal.isCompleted
+                                                  ? const Color(0xFF4BD37B)
+                                                  : _accent,
+                                            ),
                                       ),
                                     ],
                                   ),
@@ -483,12 +619,18 @@ class _InsightsDashboardScreenState extends State<InsightsDashboardScreen> {
                                   ClipRRect(
                                     borderRadius: BorderRadius.circular(8),
                                     child: LinearProgressIndicator(
-                                      value: (goal.currentWeekSessionCount / goal.targetSessions)
-                                          .clamp(0.0, 1.0),
+                                      value:
+                                          (goal.currentWeekSessionCount /
+                                                  goal.targetSessions)
+                                              .clamp(0.0, 1.0),
                                       minHeight: 6,
-                                      backgroundColor: Colors.white.withValues(alpha: 0.1),
+                                      backgroundColor: Colors.white.withValues(
+                                        alpha: 0.1,
+                                      ),
                                       valueColor: AlwaysStoppedAnimation<Color>(
-                                        goal.isCompleted ? const Color(0xFF4BD37B) : _accent,
+                                        goal.isCompleted
+                                            ? const Color(0xFF4BD37B)
+                                            : _accent,
                                       ),
                                     ),
                                   ),
@@ -506,12 +648,15 @@ class _InsightsDashboardScreenState extends State<InsightsDashboardScreen> {
                               children: [
                                 _MetricCard(
                                   title: 'Total Study Time',
-                                  value: _formatDuration(summary.totalStudySeconds),
+                                  value: _formatDuration(
+                                    summary.totalStudySeconds,
+                                  ),
                                   icon: Icons.timer_outlined,
                                 ),
                                 _MetricCard(
                                   title: 'Average Focus Score',
-                                  value: '${summary.averageFocusScore.toStringAsFixed(1)}%',
+                                  value:
+                                      '${summary.averageFocusScore.toStringAsFixed(1)}%',
                                   icon: Icons.psychology_alt_outlined,
                                 ),
                                 _MetricCard(
@@ -551,12 +696,15 @@ class _InsightsDashboardScreenState extends State<InsightsDashboardScreen> {
                                       (segment) => Chip(
                                         label: Text(
                                           '${segment.label}: ${segment.averageFocusScore.toStringAsFixed(0)}% (${segment.sessionCount})',
-                                          style: theme.textTheme.labelSmall?.copyWith(
-                                            color: _textPrimary,
-                                          ),
+                                          style: theme.textTheme.labelSmall
+                                              ?.copyWith(color: _textPrimary),
                                         ),
                                         backgroundColor: _cardElevated,
-                                        side: BorderSide(color: Colors.white.withValues(alpha: 0.12)),
+                                        side: BorderSide(
+                                          color: Colors.white.withValues(
+                                            alpha: 0.12,
+                                          ),
+                                        ),
                                       ),
                                     )
                                     .toList(),
@@ -579,15 +727,19 @@ class _InsightsDashboardScreenState extends State<InsightsDashboardScreen> {
                             const SizedBox(height: 8),
                             Text(
                               'Study time and focus score trends from recent sessions.',
-                              style: theme.textTheme.bodySmall?.copyWith(color: _textSecondary),
+                              style: theme.textTheme.bodySmall?.copyWith(
+                                color: _textSecondary,
+                              ),
                             ),
                             const SizedBox(height: 14),
                             _TrendBarStrip(
                               title: 'Daily Study Time',
                               points: payload.weeklyTrend,
-                              valueGetter: (point) => point.totalStudySeconds / 3600,
+                              valueGetter: (point) =>
+                                  point.totalStudySeconds / 3600,
                               valueLabelBuilder: (point) {
-                                final mins = (point.totalStudySeconds / 60).round();
+                                final mins = (point.totalStudySeconds / 60)
+                                    .round();
                                 return '${mins}m';
                               },
                             ),
@@ -623,7 +775,8 @@ class _InsightsDashboardScreenState extends State<InsightsDashboardScreen> {
                       controller: _subjectsController,
                       maxLines: 3,
                       decoration: const InputDecoration(
-                        hintText: 'Add subjects/tasks (comma or new line separated)',
+                        hintText:
+                            'Add subjects/tasks (comma or new line separated)',
                         prefixIcon: Icon(Icons.checklist_rounded),
                       ),
                     ),
@@ -660,7 +813,9 @@ class _InsightsDashboardScreenState extends State<InsightsDashboardScreen> {
                     const SizedBox(height: AppTheme.md),
                     Text(
                       'Auto plan rules: 25-45 min study blocks, 5-10 min breaks, tasks assigned sequentially.',
-                      style: theme.textTheme.bodySmall?.copyWith(color: _textSecondary),
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: _textSecondary,
+                      ),
                     ),
                   ],
                 ),
@@ -670,14 +825,20 @@ class _InsightsDashboardScreenState extends State<InsightsDashboardScreen> {
                 Padding(
                   padding: const EdgeInsets.only(bottom: 10),
                   child: Text(
-                    'Plan is synced to Firestore. Mark blocks as done or skipped to track behavior.',
-                    style: theme.textTheme.bodySmall?.copyWith(color: _textSecondary),
+                    _isLocalPlanId(_activePlanId!)
+                        ? 'Plan is stored locally. Login or restore connectivity to sync to Firestore.'
+                        : 'Plan is synced to Firestore. Mark blocks as done or skipped to track behavior.',
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: _textSecondary,
+                    ),
                   ),
                 ),
               if (_trackedBlocks.isEmpty)
                 Text(
                   'No generated sessions yet. Add tasks and time range, then tap Generate Auto Plan.',
-                  style: theme.textTheme.bodyMedium?.copyWith(color: _textSecondary),
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    color: _textSecondary,
+                  ),
                 ),
               if (_trackedBlocks.isNotEmpty)
                 ..._trackedBlocks.asMap().entries.map(
@@ -690,15 +851,15 @@ class _InsightsDashboardScreenState extends State<InsightsDashboardScreen> {
                       isUpdating: _updatingBlockIndexes.contains(entry.key),
                       onDone: entry.value.status == PlanBlockStatus.pending
                           ? () => _updateBlockStatus(
-                                index: entry.key,
-                                status: PlanBlockStatus.done,
-                              )
+                              index: entry.key,
+                              status: PlanBlockStatus.completed,
+                            )
                           : null,
                       onSkip: entry.value.status == PlanBlockStatus.pending
                           ? () => _updateBlockStatus(
-                                index: entry.key,
-                                status: PlanBlockStatus.skipped,
-                              )
+                              index: entry.key,
+                              status: PlanBlockStatus.skipped,
+                            )
                           : null,
                     ),
                   ),
@@ -809,8 +970,9 @@ class _TrackedPlanBlockTile extends StatelessWidget {
                           style: OutlinedButton.styleFrom(
                             foregroundColor: const Color(0xFF4BD37B),
                             side: BorderSide(
-                              color: const Color(0xFF4BD37B)
-                                  .withValues(alpha: 0.65),
+                              color: const Color(
+                                0xFF4BD37B,
+                              ).withValues(alpha: 0.65),
                             ),
                           ),
                         ),
@@ -824,8 +986,9 @@ class _TrackedPlanBlockTile extends StatelessWidget {
                           style: OutlinedButton.styleFrom(
                             foregroundColor: const Color(0xFFFF6B6B),
                             side: BorderSide(
-                              color: const Color(0xFFFF6B6B)
-                                  .withValues(alpha: 0.65),
+                              color: const Color(
+                                0xFFFF6B6B,
+                              ).withValues(alpha: 0.65),
                             ),
                           ),
                         ),
@@ -851,6 +1014,7 @@ class _TrackedPlanBlockTile extends StatelessWidget {
     );
   }
 }
+
 class _MetricCard extends StatelessWidget {
   const _MetricCard({
     required this.title,
@@ -878,16 +1042,16 @@ class _MetricCard extends StatelessWidget {
           Text(
             value,
             style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                  fontWeight: FontWeight.w500,
-                  color: _InsightsDashboardScreenState._textPrimary,
-                ),
+              fontWeight: FontWeight.w500,
+              color: _InsightsDashboardScreenState._textPrimary,
+            ),
           ),
           const SizedBox(height: 4),
           Text(
             title,
             style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: _InsightsDashboardScreenState._textSecondary,
-                ),
+              color: _InsightsDashboardScreenState._textSecondary,
+            ),
           ),
         ],
       ),
@@ -947,9 +1111,9 @@ class _TrendBarStrip extends StatelessWidget {
         Text(
           title,
           style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                fontWeight: FontWeight.w600,
-                color: _InsightsDashboardScreenState._textPrimary,
-              ),
+            fontWeight: FontWeight.w600,
+            color: _InsightsDashboardScreenState._textPrimary,
+          ),
         ),
         const SizedBox(height: 10),
         Row(
@@ -969,8 +1133,8 @@ class _TrendBarStrip extends StatelessWidget {
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                            color: _InsightsDashboardScreenState._textSecondary,
-                          ),
+                        color: _InsightsDashboardScreenState._textSecondary,
+                      ),
                     ),
                     const SizedBox(height: 6),
                     Container(
@@ -992,8 +1156,8 @@ class _TrendBarStrip extends StatelessWidget {
                     Text(
                       _dayShortLabel(point.day),
                       style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                            color: _InsightsDashboardScreenState._textSecondary,
-                          ),
+                        color: _InsightsDashboardScreenState._textSecondary,
+                      ),
                     ),
                   ],
                 ),
@@ -1040,9 +1204,9 @@ class _BadgeChip extends StatelessWidget {
       child: Text(
         label,
         style: Theme.of(context).textTheme.labelSmall?.copyWith(
-              color: _InsightsDashboardScreenState._accent,
-              fontWeight: FontWeight.w600,
-            ),
+          color: _InsightsDashboardScreenState._accent,
+          fontWeight: FontWeight.w600,
+        ),
       ),
     );
   }

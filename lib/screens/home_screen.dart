@@ -1,8 +1,9 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 
 import '../services/auth_service.dart';
+import '../services/insights_service.dart';
 import 'insights_dashboard_screen.dart';
+import 'multi_block_timer_screen.dart';
 import 'study_timer_screen.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -22,7 +23,21 @@ class _HomeScreenState extends State<HomeScreen> {
   static const Color _textSecondary = Color(0xFF9CA3AF);
 
   final AuthService _authService = AuthService();
+  final InsightsService _insightsService = InsightsService();
   late final Future<_HomeStats> _homeStatsFuture = _loadHomeStats();
+  Stream<SessionFlowState>? _sessionFlowStream;
+
+  @override
+  void initState() {
+    super.initState();
+    final user = _authService.currentUser;
+    if (user != null) {
+      _sessionFlowStream = _insightsService.watchSessionFlowState(
+        user.uid,
+        recentLimit: 3,
+      );
+    }
+  }
 
   Future<_HomeStats> _loadHomeStats() async {
     final user = _authService.currentUser;
@@ -35,17 +50,14 @@ class _HomeScreenState extends State<HomeScreen> {
       final dayStart = DateTime(now.year, now.month, now.day);
       final nextDay = dayStart.add(const Duration(days: 1));
 
-      final querySnapshot = await FirebaseFirestore.instance
-          .collection('focus_sessions')
-          .where('user_id', isEqualTo: user.uid)
-          .orderBy('timestamp', descending: true)
-          .limit(60)
-          .get();
-
-      final sessions = querySnapshot.docs
-          .map((doc) => _SessionSample.fromMap(doc.data()))
-          .whereType<_SessionSample>()
-          .toList();
+      final sessions = await _insightsService.fetchRecentSessions(
+        userId: user.uid,
+        limit: 60,
+      );
+      final flow = await _insightsService.fetchSessionFlowState(
+        user.uid,
+        recentLimit: 3,
+      );
 
       final weeklyMinutes = _buildWeeklyMinutes(sessions);
 
@@ -54,35 +66,40 @@ class _HomeScreenState extends State<HomeScreen> {
       double focusTotal = 0;
 
       for (final session in sessions) {
-        final ts = session.startedAt;
+        final ts = session.timestamp;
         if (ts == null) continue;
 
         if (!ts.isBefore(dayStart) && ts.isBefore(nextDay)) {
           todayStudySeconds += session.durationSeconds;
-          if (session.focusScore != null) {
+          if (session.focusScore > 0) {
             focusCount += 1;
-            focusTotal += session.focusScore!;
+            focusTotal += session.focusScore;
           }
         }
       }
 
-      final averageFocusPercent =
-          focusCount == 0 ? null : (focusTotal / focusCount).clamp(0, 100).toDouble();
+      final averageFocusPercent = focusCount == 0
+          ? null
+          : (focusTotal / focusCount).clamp(0, 100).toDouble();
 
       return _HomeStats(
         todayStudySeconds: todayStudySeconds,
         averageFocusPercent: averageFocusPercent,
-        currentStreakDays: _calculateCurrentStreak(sessions.map((e) => e.startedAt)),
+        currentStreakDays: _calculateCurrentStreak(
+          sessions.map((e) => e.timestamp),
+        ),
         recentSessions: sessions.take(3).toList(),
         weeklyFocusMinutes: weeklyMinutes,
         isWeeklyImproving: _isWeeklyImproving(weeklyMinutes),
+        upcomingSession: flow.upcoming,
+        currentSession: flow.current,
       );
     } catch (_) {
       return const _HomeStats.empty();
     }
   }
 
-  List<int> _buildWeeklyMinutes(List<_SessionSample> sessions) {
+  List<int> _buildWeeklyMinutes(List<FocusSessionRecord> sessions) {
     final now = DateTime.now();
     final today = DateTime(now.year, now.month, now.day);
     final start = today.subtract(const Duration(days: 6));
@@ -94,12 +111,13 @@ class _HomeScreenState extends State<HomeScreen> {
     }
 
     for (final session in sessions) {
-      final ts = session.startedAt;
+      final ts = session.timestamp;
       if (ts == null) continue;
 
       final key = DateTime(ts.year, ts.month, ts.day);
       if (dayTotals.containsKey(key)) {
-        dayTotals[key] = (dayTotals[key] ?? 0) + (session.durationSeconds ~/ 60);
+        dayTotals[key] =
+            (dayTotals[key] ?? 0) + (session.durationSeconds ~/ 60);
       }
     }
 
@@ -155,6 +173,50 @@ class _HomeScreenState extends State<HomeScreen> {
     return '$minutes min';
   }
 
+  Future<void> _openPrimarySession({
+    SessionPreview? current,
+    SessionPreview? upcoming,
+  }) async {
+    final contextRef = context;
+    final user = _authService.currentUser;
+    if (user == null) {
+      if (!mounted) {
+        return;
+      }
+      Navigator.of(
+        contextRef,
+      ).push(MaterialPageRoute(builder: (_) => const StudyTimerScreen()));
+      return;
+    }
+
+    TrackedStudyPlan? plan;
+    final planIdCandidate = current?.planId ?? upcoming?.planId;
+
+    if (planIdCandidate != null && planIdCandidate.isNotEmpty) {
+      plan = await _insightsService.fetchPlanById(planIdCandidate);
+    }
+
+    plan ??= await _insightsService.fetchLatestPlan(user.uid);
+
+    if (!mounted) {
+      return;
+    }
+
+    if (plan != null && plan.blocks.isNotEmpty) {
+      Navigator.of(contextRef).push(
+        MaterialPageRoute(
+          builder: (_) =>
+              MultiBlockTimerScreen(plan: plan!, autostartBlocks: true),
+        ),
+      );
+      return;
+    }
+
+    Navigator.of(
+      contextRef,
+    ).push(MaterialPageRoute(builder: (_) => const StudyTimerScreen()));
+  }
+
   @override
   Widget build(BuildContext context) {
     final user = _authService.currentUser;
@@ -171,12 +233,13 @@ class _HomeScreenState extends State<HomeScreen> {
           future: _homeStatsFuture,
           builder: (context, snapshot) {
             final stats = snapshot.data ?? const _HomeStats.empty();
-            final isLoading = snapshot.connectionState == ConnectionState.waiting;
+            final isLoading =
+                snapshot.connectionState == ConnectionState.waiting;
             final focusLabel = isLoading
                 ? '...'
                 : (stats.averageFocusPercent == null
-                    ? '--'
-                    : '${stats.averageFocusPercent!.round()}%');
+                      ? '--'
+                      : '${stats.averageFocusPercent!.round()}%');
 
             return ListView(
               padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
@@ -185,19 +248,19 @@ class _HomeScreenState extends State<HomeScreen> {
                 Text(
                   'Welcome back, $shortName',
                   style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                        fontSize: 23,
-                        fontWeight: FontWeight.w600,
-                        color: _textPrimary,
-                      ),
+                    fontSize: 23,
+                    fontWeight: FontWeight.w600,
+                    color: _textPrimary,
+                  ),
                 ),
                 const SizedBox(height: 7),
                 Text(
                   'Let\'s stay consistent today',
                   style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w400,
-                        color: _textSecondary,
-                      ),
+                    fontSize: 14,
+                    fontWeight: FontWeight.w400,
+                    color: _textSecondary,
+                  ),
                 ),
                 const SizedBox(height: 18),
                 _HomeCard(
@@ -213,29 +276,39 @@ class _HomeScreenState extends State<HomeScreen> {
                       Text(
                         'Current Streak',
                         style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                              fontSize: 14,
-                              color: _textSecondary,
-                              fontWeight: FontWeight.w500,
-                            ),
+                          fontSize: 14,
+                          color: _textSecondary,
+                          fontWeight: FontWeight.w500,
+                        ),
                       ),
                       const SizedBox(height: 8),
                       Text(
                         isLoading ? '...' : '${stats.currentStreakDays} days',
                         style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                              fontSize: 20,
-                              fontWeight: FontWeight.w600,
-                              color: _textPrimary,
-                            ),
+                          fontSize: 20,
+                          fontWeight: FontWeight.w600,
+                          color: _textPrimary,
+                        ),
                       ),
                     ],
                   ),
                 ),
                 const SizedBox(height: 22),
-                _PrimarySessionCard(
-                  onTap: () {
-                    Navigator.of(context).push(
-                      MaterialPageRoute(
-                        builder: (_) => const StudyTimerScreen(),
+                StreamBuilder<SessionFlowState>(
+                  stream: _sessionFlowStream,
+                  initialData: SessionFlowState(
+                    current: stats.currentSession,
+                    upcoming: stats.upcomingSession,
+                    recent: const <FocusSessionRecord>[],
+                  ),
+                  builder: (context, flowSnapshot) {
+                    final flow = flowSnapshot.data;
+                    return _PrimarySessionCard(
+                      currentSession: flow?.current,
+                      upcomingSession: flow?.upcoming,
+                      onTap: () => _openPrimarySession(
+                        current: flow?.current,
+                        upcoming: flow?.upcoming,
                       ),
                     );
                   },
@@ -254,7 +327,10 @@ class _HomeScreenState extends State<HomeScreen> {
                     style: TextButton.styleFrom(
                       backgroundColor: _cardElevated,
                       foregroundColor: _textSecondary,
-                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 8,
+                      ),
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(12),
                       ),
@@ -262,10 +338,10 @@ class _HomeScreenState extends State<HomeScreen> {
                     child: Text(
                       'Plan Session',
                       style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                            fontSize: 12,
-                            fontWeight: FontWeight.w500,
-                            color: _textSecondary,
-                          ),
+                        fontSize: 12,
+                        fontWeight: FontWeight.w500,
+                        color: _textSecondary,
+                      ),
                     ),
                   ),
                 ),
@@ -281,15 +357,19 @@ class _HomeScreenState extends State<HomeScreen> {
                           children: [
                             Text(
                               'Today',
-                              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                              style: Theme.of(context).textTheme.bodyMedium
+                                  ?.copyWith(
                                     fontSize: 14,
                                     color: _textSecondary,
                                   ),
                             ),
                             const SizedBox(height: 20),
                             Text(
-                              isLoading ? '...' : _formatStudyTime(stats.todayStudySeconds),
-                              style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                              isLoading
+                                  ? '...'
+                                  : _formatStudyTime(stats.todayStudySeconds),
+                              style: Theme.of(context).textTheme.titleLarge
+                                  ?.copyWith(
                                     fontSize: 18,
                                     fontWeight: FontWeight.w600,
                                     color: _textPrimary,
@@ -309,7 +389,8 @@ class _HomeScreenState extends State<HomeScreen> {
                           children: [
                             Text(
                               'Focus Score',
-                              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                              style: Theme.of(context).textTheme.bodyMedium
+                                  ?.copyWith(
                                     fontSize: 14,
                                     color: _textSecondary,
                                   ),
@@ -317,7 +398,8 @@ class _HomeScreenState extends State<HomeScreen> {
                             const SizedBox(height: 20),
                             Text(
                               focusLabel,
-                              style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                              style: Theme.of(context).textTheme.titleMedium
+                                  ?.copyWith(
                                     fontSize: 18,
                                     fontWeight: FontWeight.w600,
                                     color: _textPrimary,
@@ -338,10 +420,10 @@ class _HomeScreenState extends State<HomeScreen> {
                       Text(
                         'Weekly Focus',
                         style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                              fontSize: 14,
-                              fontWeight: FontWeight.w600,
-                              color: _textPrimary,
-                            ),
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                          color: _textPrimary,
+                        ),
                       ),
                       const SizedBox(height: 12),
                       SizedBox(
@@ -356,13 +438,13 @@ class _HomeScreenState extends State<HomeScreen> {
                         isLoading
                             ? 'Loading weekly trend...'
                             : (stats.isWeeklyImproving
-                                ? 'Focus improving this week'
-                                : 'Keep consistency to improve focus'),
+                                  ? 'Focus improving this week'
+                                  : 'Keep consistency to improve focus'),
                         style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                              fontSize: 12,
-                              fontWeight: FontWeight.w400,
-                              color: _textSecondary,
-                            ),
+                          fontSize: 12,
+                          fontWeight: FontWeight.w400,
+                          color: _textSecondary,
+                        ),
                       ),
                     ],
                   ),
@@ -376,25 +458,23 @@ class _HomeScreenState extends State<HomeScreen> {
                       Text(
                         'Recent Sessions',
                         style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                              fontSize: 14,
-                              fontWeight: FontWeight.w500,
-                              color: _textSecondary,
-                            ),
+                          fontSize: 14,
+                          fontWeight: FontWeight.w500,
+                          color: _textSecondary,
+                        ),
                       ),
                       const SizedBox(height: 10),
                       if (isLoading)
                         Text(
                           'Loading...',
-                          style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                                color: _textSecondary,
-                              ),
+                          style: Theme.of(context).textTheme.bodySmall
+                              ?.copyWith(color: _textSecondary),
                         )
                       else if (stats.recentSessions.isEmpty)
                         Text(
                           'No recent sessions yet',
-                          style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                                color: _textSecondary,
-                              ),
+                          style: Theme.of(context).textTheme.bodySmall
+                              ?.copyWith(color: _textSecondary),
                         )
                       else
                         ...stats.recentSessions.asMap().entries.map((entry) {
@@ -402,15 +482,20 @@ class _HomeScreenState extends State<HomeScreen> {
                           final session = entry.value;
                           return Padding(
                             padding: EdgeInsets.only(
-                              bottom: index == stats.recentSessions.length - 1 ? 0 : 10,
+                              bottom: index == stats.recentSessions.length - 1
+                                  ? 0
+                                  : 10,
                             ),
                             child: Row(
                               mainAxisAlignment: MainAxisAlignment.spaceBetween,
                               children: [
                                 Expanded(
                                   child: Text(
-                                    session.subject,
-                                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                                    session.subject ?? 'Smart Session',
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .bodyMedium
+                                        ?.copyWith(
                                           fontSize: 14.5,
                                           fontWeight: FontWeight.w500,
                                           color: _textPrimary,
@@ -419,8 +504,11 @@ class _HomeScreenState extends State<HomeScreen> {
                                 ),
                                 const SizedBox(width: 8),
                                 Text(
-                                  _formatSessionDuration(session.durationSeconds),
-                                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                  _formatSessionDuration(
+                                    session.durationSeconds,
+                                  ),
+                                  style: Theme.of(context).textTheme.bodySmall
+                                      ?.copyWith(
                                         fontSize: 13,
                                         color: _textSecondary,
                                       ),
@@ -442,7 +530,8 @@ class _HomeScreenState extends State<HomeScreen> {
                           },
                           child: Text(
                             'View All',
-                            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                            style: Theme.of(context).textTheme.bodySmall
+                                ?.copyWith(
                                   fontSize: 12,
                                   fontWeight: FontWeight.w500,
                                   color: _primaryBlue,
@@ -463,12 +552,33 @@ class _HomeScreenState extends State<HomeScreen> {
 }
 
 class _PrimarySessionCard extends StatelessWidget {
-  const _PrimarySessionCard({required this.onTap});
+  const _PrimarySessionCard({
+    required this.onTap,
+    required this.currentSession,
+    required this.upcomingSession,
+  });
 
   final VoidCallback onTap;
+  final SessionPreview? currentSession;
+  final SessionPreview? upcomingSession;
 
   @override
   Widget build(BuildContext context) {
+    final hasCurrent = currentSession != null;
+    final hasUpcoming = upcomingSession != null;
+
+    final title = hasCurrent
+        ? 'Resume ${currentSession!.subject}'
+        : hasUpcoming
+        ? 'Start ${upcomingSession!.subject}'
+        : 'Start Smart Session';
+
+    final subtitle = hasCurrent
+        ? '${currentSession!.durationMinutes} min in progress'
+        : hasUpcoming
+        ? 'Next up: ${upcomingSession!.durationMinutes} min'
+        : 'Your plan will be organized automatically';
+
     return Material(
       color: Colors.transparent,
       child: InkWell(
@@ -492,21 +602,21 @@ class _PrimarySessionCard extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'Start Smart Session',
+                  title,
                   style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                        fontSize: 18,
-                        fontWeight: FontWeight.w600,
-                        color: Colors.white,
-                      ),
+                    fontSize: 18,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.white,
+                  ),
                 ),
                 const SizedBox(height: 6),
                 Text(
-                  'Your plan will be organized automatically',
+                  subtitle,
                   style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                        color: Colors.white.withValues(alpha: 0.82),
-                        fontSize: 14,
-                        fontWeight: FontWeight.w400,
-                      ),
+                    color: Colors.white.withValues(alpha: 0.82),
+                    fontSize: 14,
+                    fontWeight: FontWeight.w400,
+                  ),
                 ),
               ],
             ),
@@ -518,10 +628,7 @@ class _PrimarySessionCard extends StatelessWidget {
 }
 
 class _MiniLineChart extends StatelessWidget {
-  const _MiniLineChart({
-    required this.values,
-    required this.lineColor,
-  });
+  const _MiniLineChart({required this.values, required this.lineColor});
 
   final List<int> values;
   final Color lineColor;
@@ -601,7 +708,9 @@ class _HomeCard extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       width: double.infinity,
-      constraints: minHeight == null ? null : BoxConstraints(minHeight: minHeight!),
+      constraints: minHeight == null
+          ? null
+          : BoxConstraints(minHeight: minHeight!),
       padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
         color: backgroundColor ?? _HomeScreenState._cardElevated,
@@ -628,60 +737,26 @@ class _HomeStats {
     required this.recentSessions,
     required this.weeklyFocusMinutes,
     required this.isWeeklyImproving,
+    required this.upcomingSession,
+    required this.currentSession,
   });
 
   const _HomeStats.empty()
-      : todayStudySeconds = 0,
-        averageFocusPercent = null,
-        currentStreakDays = 0,
-        recentSessions = const [],
-        weeklyFocusMinutes = const [0, 0, 0, 0, 0, 0, 0],
-        isWeeklyImproving = false;
+    : todayStudySeconds = 0,
+      averageFocusPercent = null,
+      currentStreakDays = 0,
+      recentSessions = const [],
+      weeklyFocusMinutes = const [0, 0, 0, 0, 0, 0, 0],
+      isWeeklyImproving = false,
+      upcomingSession = null,
+      currentSession = null;
 
   final int todayStudySeconds;
   final double? averageFocusPercent;
   final int currentStreakDays;
-  final List<_SessionSample> recentSessions;
+  final List<FocusSessionRecord> recentSessions;
   final List<int> weeklyFocusMinutes;
   final bool isWeeklyImproving;
-}
-
-class _SessionSample {
-  const _SessionSample({
-    required this.startedAt,
-    required this.durationSeconds,
-    required this.focusScore,
-    required this.subject,
-  });
-
-  final DateTime? startedAt;
-  final int durationSeconds;
-  final double? focusScore;
-  final String subject;
-
-  static _SessionSample? fromMap(Map<String, dynamic> data) {
-    DateTime? timestamp;
-    final rawTimestamp = data['timestamp'] ?? data['session_started_at'];
-    if (rawTimestamp is Timestamp) {
-      timestamp = rawTimestamp.toDate();
-    }
-
-    final duration = (data['total_duration_seconds'] as num?)?.toInt() ??
-        (data['session_duration'] as num?)?.toInt() ??
-        (data['duration_seconds'] as num?)?.toInt() ??
-        0;
-
-    if (duration <= 0 && timestamp == null) {
-      return null;
-    }
-
-    final subject = (data['subject'] as String?)?.trim();
-
-    return _SessionSample(
-      startedAt: timestamp,
-      durationSeconds: duration,
-      focusScore: (data['focus_score'] as num?)?.toDouble(),
-      subject: (subject == null || subject.isEmpty) ? 'Smart Session' : subject,
-    );
-  }
+  final SessionPreview? upcomingSession;
+  final SessionPreview? currentSession;
 }

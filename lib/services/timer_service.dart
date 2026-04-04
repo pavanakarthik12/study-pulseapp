@@ -48,7 +48,9 @@ class ExecutingBlock {
       blockId: data['block_id'] as String,
       subject: data['subject'] as String,
       durationSeconds: data['duration_seconds'] as int,
-      type: data['type'] == 'study' ? PlanBlockType.study : PlanBlockType.shortBreak,
+      type: data['type'] == 'study'
+          ? PlanBlockType.study
+          : PlanBlockType.shortBreak,
       state: TimerBlockState.values.firstWhere(
         (s) => s.name == data['state'],
         orElse: () => TimerBlockState.pending,
@@ -84,8 +86,8 @@ class TimerQueueState {
   /// Get current block
   ExecutingBlock? get currentBlock =>
       currentBlockIndex >= 0 && currentBlockIndex < allBlocks.length
-          ? allBlocks[currentBlockIndex]
-          : null;
+      ? allBlocks[currentBlockIndex]
+      : null;
 
   /// Get remaining blocks (not including current)
   List<ExecutingBlock> get upcomingBlocks =>
@@ -106,8 +108,8 @@ class TimerQueueState {
       allBlocks.fold<int>(0, (total, block) => total + block.elapsedSeconds);
 
   /// Get overall progress
-  double get overallProgress => totalPlanDurationSeconds > 0 
-      ? totalElapsedSeconds / totalPlanDurationSeconds 
+  double get overallProgress => totalPlanDurationSeconds > 0
+      ? totalElapsedSeconds / totalPlanDurationSeconds
       : 0.0;
 
   Map<String, dynamic> toMap() {
@@ -126,9 +128,11 @@ class TimerQueueState {
   factory TimerQueueState.fromMap(Map<String, dynamic> data) {
     final blocksList = data['all_blocks'] as List?;
     final blocks = blocksList != null
-        ? blocksList.map<ExecutingBlock>(
-            (b) => ExecutingBlock.fromMap(b as Map<String, dynamic>),
-          ).toList()
+        ? blocksList
+              .map<ExecutingBlock>(
+                (b) => ExecutingBlock.fromMap(b as Map<String, dynamic>),
+              )
+              .toList()
         : <ExecutingBlock>[];
 
     return TimerQueueState(
@@ -156,11 +160,16 @@ class TimerService {
 
   TimerService._internal();
 
+  final InsightsService _insightsService = InsightsService();
+
   // State management
   TimerQueueState? _queueState;
   Timer? _executionTimer;
   DateTime? _timerStartTime;
   int _pausedElapsed = 0;
+  bool _hasSavedResultsForCurrentPlan = false;
+  DateTime? _lastQueuePersistAt;
+  String? _lastPlanSyncSignature;
 
   // Event streams
   final _queueStateController = StreamController<TimerQueueState>.broadcast();
@@ -181,34 +190,53 @@ class TimerService {
     String userId,
     List<TrackedPlanBlock> trackedBlocks,
   ) async {
+    final persistedState = await loadPersisted(userId, planId);
+    if (persistedState != null && !persistedState.isComplete) {
+      _queueState = persistedState;
+      _hasSavedResultsForCurrentPlan = false;
+      _lastQueuePersistAt = null;
+      _lastPlanSyncSignature = null;
+      _emitQueueState();
+      return;
+    }
+
+    final orderedTrackedBlocks = [...trackedBlocks]
+      ..sort((a, b) => a.orderIndex.compareTo(b.orderIndex));
+
     final executingBlocks = <ExecutingBlock>[];
     int blockId = 0;
 
-    for (final block in trackedBlocks) {
+    for (final block in orderedTrackedBlocks) {
       executingBlocks.add(
         ExecutingBlock(
           blockId: 'block_$blockId',
           subject: block.subject,
           durationSeconds: block.durationMinutes * 60,
           type: block.type,
-          state: TimerBlockState.pending,
+          state: _toTimerState(block.status),
         ),
       );
       blockId++;
     }
 
+    final firstPendingIndex = executingBlocks.indexWhere(
+      (block) =>
+          block.state != TimerBlockState.completed &&
+          block.state != TimerBlockState.skipped,
+    );
+
     _queueState = TimerQueueState(
       planId: planId,
       userId: userId,
       allBlocks: executingBlocks,
-      currentBlockIndex: 0,
+      currentBlockIndex: firstPendingIndex >= 0 ? firstPendingIndex : 0,
       startedAt: DateTime.now(),
     );
+    _hasSavedResultsForCurrentPlan = false;
+    _lastQueuePersistAt = null;
+    _lastPlanSyncSignature = null;
 
-    // Update first block to pending (ready to start)
-    if (_queueState!.currentBlock != null) {
-      _queueState!.currentBlock!.state = TimerBlockState.pending;
-    }
+    _normalizeSingleActiveBlock();
 
     _emitQueueState();
     await _persistQueueState();
@@ -225,6 +253,7 @@ class TimerService {
     }
 
     current.state = TimerBlockState.running;
+    _normalizeSingleActiveBlock();
     _timerStartTime = DateTime.now();
     _pausedElapsed = current.elapsedSeconds;
 
@@ -249,6 +278,8 @@ class TimerService {
       _queueState!.pausedAt = DateTime.now();
     }
 
+    _normalizeSingleActiveBlock();
+
     _emitQueueState();
   }
 
@@ -260,6 +291,7 @@ class TimerService {
     if (current?.state != TimerBlockState.paused) return;
 
     current!.state = TimerBlockState.running;
+    _normalizeSingleActiveBlock();
     _timerStartTime = DateTime.now();
     _pausedElapsed = current.elapsedSeconds;
     _queueState!.pausedAt = null;
@@ -281,6 +313,8 @@ class TimerService {
       _queueState!.skippedBlockCount++;
     }
 
+    _normalizeSingleActiveBlock();
+
     _moveToNextBlock();
   }
 
@@ -296,6 +330,8 @@ class TimerService {
       _blockCompleteController.add(current);
     }
 
+    _normalizeSingleActiveBlock();
+
     _moveToNextBlock();
   }
 
@@ -307,8 +343,10 @@ class TimerService {
     _pausedElapsed = 0;
 
     if (_queueState?.currentBlock != null) {
-      _queueState!.currentBlock!.state = TimerBlockState.pending;
+      _queueState!.currentBlock!.state = TimerBlockState.paused;
     }
+
+    _normalizeSingleActiveBlock();
 
     _emitQueueState();
   }
@@ -316,10 +354,6 @@ class TimerService {
   /// Dispose resources
   void dispose() {
     stopTimer();
-    _queueStateController.close();
-    _blockCompleteController.close();
-    _planCompleteController.close();
-    _queueState = null;
   }
 
   /// Reset for new plan
@@ -355,6 +389,8 @@ class TimerService {
       Future.delayed(const Duration(milliseconds: 500), _moveToNextBlock);
     }
 
+    _normalizeSingleActiveBlock();
+
     _emitQueueState();
   }
 
@@ -383,11 +419,12 @@ class TimerService {
 
       if (nextBlock != null) {
         nextBlock.state = TimerBlockState.pending;
-        // Auto-start if it's a short break
-        if (nextBlock.type == PlanBlockType.shortBreak) {
-          Future.delayed(const Duration(milliseconds: 500), startTimer);
-        }
       }
+
+      _normalizeSingleActiveBlock();
+
+      // Automatic progression for both study and break blocks.
+      Future.delayed(const Duration(milliseconds: 400), startTimer);
     } else {
       // Plan is complete
       _notifyPlanComplete();
@@ -399,13 +436,128 @@ class TimerService {
   void _notifyPlanComplete() {
     _executionTimer?.cancel();
     if (_queueState != null) {
+      unawaited(saveSessionResults(_queueState!.userId));
+      unawaited(
+        _insightsService.syncPlanSchedule(
+          planId: _queueState!.planId,
+          blocks: _toTrackedBlocks(_queueState!.allBlocks),
+          currentBlockIndex: _queueState!.allBlocks.length,
+          planStatus: 'completed',
+        ),
+      );
       _planCompleteController.add(_queueState!.planId);
     }
   }
 
   void _emitQueueState() {
     if (_queueState != null) {
+      _normalizeSingleActiveBlock();
       _queueStateController.add(_queueState!);
+
+      final now = DateTime.now();
+      final shouldPersistQueue =
+          _lastQueuePersistAt == null ||
+          now.difference(_lastQueuePersistAt!).inSeconds >= 5 ||
+          !isRunning;
+
+      if (shouldPersistQueue) {
+        _lastQueuePersistAt = now;
+        unawaited(_persistQueueState());
+      }
+
+      final trackedBlocks = _toTrackedBlocks(_queueState!.allBlocks);
+      final signature = [
+        _queueState!.planId,
+        _queueState!.currentBlockIndex,
+        _queueState!.completedBlockCount,
+        _queueState!.skippedBlockCount,
+        trackedBlocks.map((b) => b.status.name).join(','),
+      ].join('|');
+
+      if (_lastPlanSyncSignature != signature) {
+        _lastPlanSyncSignature = signature;
+        unawaited(
+          _insightsService.syncPlanSchedule(
+            planId: _queueState!.planId,
+            blocks: trackedBlocks,
+            currentBlockIndex: _queueState!.currentBlockIndex,
+            planStatus: _queueState!.isComplete ? 'completed' : 'active',
+          ),
+        );
+      }
+    }
+  }
+
+  List<TrackedPlanBlock> _toTrackedBlocks(List<ExecutingBlock> blocks) {
+    return blocks
+        .asMap()
+        .entries
+        .map(
+          (entry) => TrackedPlanBlock(
+            subject: entry.value.subject,
+            durationMinutes: (entry.value.durationSeconds / 60).round(),
+            status: _toPlanStatus(entry.value.state),
+            type: entry.value.type,
+            orderIndex: entry.key,
+          ),
+        )
+        .toList();
+  }
+
+  PlanBlockStatus _toPlanStatus(TimerBlockState state) {
+    switch (state) {
+      case TimerBlockState.running:
+      case TimerBlockState.paused:
+        return PlanBlockStatus.active;
+      case TimerBlockState.completed:
+        return PlanBlockStatus.completed;
+      case TimerBlockState.skipped:
+        return PlanBlockStatus.skipped;
+      case TimerBlockState.pending:
+        return PlanBlockStatus.pending;
+    }
+  }
+
+  TimerBlockState _toTimerState(PlanBlockStatus status) {
+    switch (status) {
+      case PlanBlockStatus.active:
+        return TimerBlockState.paused;
+      case PlanBlockStatus.completed:
+        return TimerBlockState.completed;
+      case PlanBlockStatus.skipped:
+        return TimerBlockState.skipped;
+      case PlanBlockStatus.pending:
+        return TimerBlockState.pending;
+    }
+  }
+
+  void _normalizeSingleActiveBlock() {
+    if (_queueState == null) {
+      return;
+    }
+
+    for (var i = 0; i < _queueState!.allBlocks.length; i++) {
+      final block = _queueState!.allBlocks[i];
+      if (i < _queueState!.currentBlockIndex &&
+          block.state != TimerBlockState.completed &&
+          block.state != TimerBlockState.skipped) {
+        block.state = TimerBlockState.completed;
+      }
+
+      if (i > _queueState!.currentBlockIndex &&
+          block.state != TimerBlockState.completed &&
+          block.state != TimerBlockState.skipped) {
+        block.state = TimerBlockState.pending;
+      }
+    }
+
+    final current = _queueState!.currentBlock;
+    if (current != null &&
+        current.state != TimerBlockState.running &&
+        current.state != TimerBlockState.paused &&
+        current.state != TimerBlockState.completed &&
+        current.state != TimerBlockState.skipped) {
+      current.state = TimerBlockState.pending;
     }
   }
 
@@ -449,24 +601,57 @@ class TimerService {
   /// Save session results to firestore
   Future<void> saveSessionResults(String userId) async {
     if (_queueState == null) return;
+    if (_hasSavedResultsForCurrentPlan) return;
 
     try {
-      final totalDuration = DateTime.now().difference(_queueState!.startedAt);
-      await FirebaseFirestore.instance
-          .collection('users')
-          .doc(userId)
-          .collection('focus_sessions')
-          .add({
-        'user_id': userId,
-        'plan_id': _queueState!.planId,
-        'session_started_at': _queueState!.startedAt,
-        'session_ended_at': DateTime.now(),
-        'total_duration_seconds': totalDuration.inSeconds,
-        'completed_blocks': _queueState!.completedBlockCount,
-        'skipped_blocks': _queueState!.skippedBlockCount,
-        'total_blocks': _queueState!.allBlocks.length,
-        'timestamp': FieldValue.serverTimestamp(),
-      });
+      final now = DateTime.now();
+      final totalDuration = now.difference(_queueState!.startedAt);
+
+      final studyBlocks = _queueState!.allBlocks
+          .where((block) => block.type == PlanBlockType.study)
+          .toList();
+      final totalStudySeconds = studyBlocks.fold<int>(
+        0,
+        (total, block) => total + block.durationSeconds,
+      );
+      final completedStudySeconds = studyBlocks.fold<int>(
+        0,
+        (total, block) =>
+            total + block.elapsedSeconds.clamp(0, block.durationSeconds),
+      );
+
+      final focusScore = totalStudySeconds <= 0
+          ? 0.0
+          : ((completedStudySeconds / totalStudySeconds) * 100)
+                .clamp(0, 100)
+                .toDouble();
+
+      final subject = studyBlocks.isEmpty
+          ? 'Smart Session'
+          : studyBlocks
+                .map((block) => block.subject.trim())
+                .firstWhere(
+                  (name) => name.isNotEmpty,
+                  orElse: () => 'Smart Session',
+                );
+
+      final isCompleted =
+          _queueState!.completedBlockCount >= _queueState!.allBlocks.length &&
+          _queueState!.skippedBlockCount == 0;
+
+      await _insightsService.saveSessionRecord(
+        SessionRecordInput(
+          userId: userId,
+          sessionDurationSeconds: totalDuration.inSeconds,
+          focusScore: focusScore,
+          timestamp: now,
+          subject: subject,
+          completed: isCompleted,
+          planId: _queueState!.planId,
+        ),
+      );
+
+      _hasSavedResultsForCurrentPlan = true;
     } catch (e) {
       debugPrint('Error saving session results: $e');
     }

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 
@@ -25,11 +27,17 @@ class FocusSessionRecord {
     DateTime? parsedTimestamp;
     if (rawTimestamp is Timestamp) {
       parsedTimestamp = rawTimestamp.toDate();
+    } else if (rawTimestamp is String) {
+      parsedTimestamp = DateTime.tryParse(rawTimestamp);
     }
 
     return FocusSessionRecord(
       focusScore: (data['focus_score'] as num?)?.toDouble() ?? 0,
-      durationSeconds: (data['session_duration'] as num?)?.toInt() ?? 0,
+      durationSeconds:
+          (data['session_duration'] as num?)?.toInt() ??
+          (data['total_duration_seconds'] as num?)?.toInt() ??
+          (data['duration_seconds'] as num?)?.toInt() ??
+          0,
       timestamp: parsedTimestamp,
       userId: (data['user_id'] as String?)?.trim(),
       subject: (data['subject'] as String?)?.trim(),
@@ -85,7 +93,23 @@ class DailyTrendPoint {
 
 enum PlanBlockType { study, shortBreak }
 
-enum PlanBlockStatus { pending, done, skipped }
+enum PlanBlockStatus { pending, active, completed, skipped }
+
+PlanBlockStatus _statusFromName(String? raw) {
+  switch (raw) {
+    case 'active':
+    case 'running':
+    case 'paused':
+      return PlanBlockStatus.active;
+    case 'completed':
+    case 'done':
+      return PlanBlockStatus.completed;
+    case 'skipped':
+      return PlanBlockStatus.skipped;
+    default:
+      return PlanBlockStatus.pending;
+  }
+}
 
 class PlanBlock {
   const PlanBlock({
@@ -108,6 +132,7 @@ class TrackedPlanBlock {
     required this.subject,
     required this.durationMinutes,
     required this.status,
+    required this.orderIndex,
     this.type = PlanBlockType.study,
   });
 
@@ -115,6 +140,7 @@ class TrackedPlanBlock {
   final int durationMinutes;
   final PlanBlockStatus status;
   final PlanBlockType type;
+  final int orderIndex;
 
   TrackedPlanBlock copyWith({PlanBlockStatus? status}) {
     return TrackedPlanBlock(
@@ -122,6 +148,27 @@ class TrackedPlanBlock {
       durationMinutes: durationMinutes,
       status: status ?? this.status,
       type: type,
+      orderIndex: orderIndex,
+    );
+  }
+
+  factory TrackedPlanBlock.fromMap(
+    Map<String, dynamic> data, {
+    required int fallbackOrderIndex,
+  }) {
+    final rawType = data['type'] as String?;
+    final rawOrderIndex = (data['order_index'] as num?)?.toInt();
+
+    return TrackedPlanBlock(
+      subject: (data['subject'] as String?)?.trim().isNotEmpty == true
+          ? (data['subject'] as String).trim()
+          : 'General Focus',
+      durationMinutes: (data['duration_minutes'] as num?)?.toInt() ?? 25,
+      status: _statusFromName(data['status'] as String?),
+      type: rawType == 'shortBreak'
+          ? PlanBlockType.shortBreak
+          : PlanBlockType.study,
+      orderIndex: rawOrderIndex ?? fallbackOrderIndex,
     );
   }
 
@@ -131,6 +178,7 @@ class TrackedPlanBlock {
       'duration_minutes': durationMinutes,
       'status': status.name,
       'type': type.name,
+      'order_index': orderIndex,
     };
   }
 }
@@ -140,11 +188,39 @@ class TrackedStudyPlan {
     required this.id,
     required this.userId,
     required this.blocks,
+    this.currentBlockIndex,
+    this.planStatus,
   });
 
   final String id;
   final String userId;
   final List<TrackedPlanBlock> blocks;
+  final int? currentBlockIndex;
+  final String? planStatus;
+
+  factory TrackedStudyPlan.fromDoc(String docId, Map<String, dynamic> data) {
+    final rawBlocks = (data['blocks'] as List?) ?? const [];
+    final blocks =
+        rawBlocks
+            .asMap()
+            .entries
+            .map(
+              (entry) => TrackedPlanBlock.fromMap(
+                entry.value as Map<String, dynamic>,
+                fallbackOrderIndex: entry.key,
+              ),
+            )
+            .toList()
+          ..sort((a, b) => a.orderIndex.compareTo(b.orderIndex));
+
+    return TrackedStudyPlan(
+      id: docId,
+      userId: (data['user_id'] as String?)?.trim() ?? '',
+      blocks: blocks,
+      currentBlockIndex: (data['current_block_index'] as num?)?.toInt(),
+      planStatus: data['plan_status'] as String?,
+    );
+  }
 }
 
 class StreakData {
@@ -228,26 +304,295 @@ class WeeklyGoal {
   }
 }
 
+class SessionRecordInput {
+  const SessionRecordInput({
+    required this.userId,
+    required this.sessionDurationSeconds,
+    required this.focusScore,
+    required this.timestamp,
+    required this.subject,
+    required this.completed,
+    this.planId,
+  });
+
+  final String userId;
+  final int sessionDurationSeconds;
+  final double focusScore;
+  final DateTime timestamp;
+  final String subject;
+  final bool completed;
+  final String? planId;
+}
+
+class SessionPreview {
+  const SessionPreview({
+    required this.subject,
+    required this.durationMinutes,
+    required this.planId,
+  });
+
+  final String subject;
+  final int durationMinutes;
+  final String? planId;
+}
+
+class SessionFlowState {
+  const SessionFlowState({
+    required this.upcoming,
+    required this.current,
+    required this.recent,
+  });
+
+  const SessionFlowState.empty()
+    : upcoming = null,
+      current = null,
+      recent = const <FocusSessionRecord>[];
+
+  final SessionPreview? upcoming;
+  final SessionPreview? current;
+  final List<FocusSessionRecord> recent;
+}
+
 class InsightsService {
   InsightsService({FirebaseFirestore? firestore})
-      : _firestore = firestore ?? FirebaseFirestore.instance;
+    : _firestore = firestore ?? FirebaseFirestore.instance;
+
+  static final StreamController<String> _sessionUpdatesController =
+      StreamController<String>.broadcast();
 
   final FirebaseFirestore _firestore;
 
   CollectionReference<Map<String, dynamic>> get _plansCollection =>
       _firestore.collection('study_plans');
 
-  Future<List<FocusSessionRecord>> fetchRecentSessions({int limit = 160}) async {
-    final query = _firestore
-        .collection('focus_sessions')
+  CollectionReference<Map<String, dynamic>> get _sessionsCollection =>
+      _firestore.collection('focus_sessions');
+
+  static Stream<String> watchSessionUpdates() =>
+      _sessionUpdatesController.stream;
+
+  static void disposeSyncControllers() {
+    _sessionUpdatesController.close();
+  }
+
+  void _notifySessionUpdated(String userId) {
+    if (!_sessionUpdatesController.isClosed) {
+      _sessionUpdatesController.add(userId);
+    }
+  }
+
+  Future<void> saveSessionRecord(SessionRecordInput input) async {
+    final payload = <String, dynamic>{
+      'user_id': input.userId,
+      'session_duration': input.sessionDurationSeconds,
+      'focus_score': input.focusScore,
+      'timestamp': Timestamp.fromDate(input.timestamp),
+      'subject': input.subject,
+      'completed': input.completed,
+      'plan_id': input.planId,
+      // Compatibility mirrors for older readers.
+      'total_duration_seconds': input.sessionDurationSeconds,
+      'session_started_at': Timestamp.fromDate(input.timestamp),
+    };
+
+    await _sessionsCollection.add(payload);
+    _notifySessionUpdated(input.userId);
+  }
+
+  Future<List<FocusSessionRecord>> fetchRecentSessions({
+    int limit = 160,
+    String? userId,
+  }) async {
+    Query<Map<String, dynamic>> query = _sessionsCollection
         .orderBy('timestamp', descending: true)
         .limit(limit);
+
+    if (userId != null && userId.isNotEmpty) {
+      query = query.where('user_id', isEqualTo: userId);
+    }
 
     final snapshot = await query.get();
 
     return snapshot.docs
         .map((doc) => FocusSessionRecord.fromMap(doc.data()))
         .toList();
+  }
+
+  Stream<List<FocusSessionRecord>> watchRecentSessions({
+    int limit = 160,
+    required String userId,
+  }) {
+    final query = _sessionsCollection
+        .where('user_id', isEqualTo: userId)
+        .orderBy('timestamp', descending: true)
+        .limit(limit);
+
+    return query.snapshots().map(
+      (snapshot) => snapshot.docs
+          .map((doc) => FocusSessionRecord.fromMap(doc.data()))
+          .toList(),
+    );
+  }
+
+  Future<SessionFlowState> fetchSessionFlowState(
+    String userId, {
+    int recentLimit = 5,
+  }) async {
+    try {
+      final recent = await fetchRecentSessions(
+        limit: recentLimit,
+        userId: userId,
+      );
+
+      final queueSnapshot = await _firestore
+          .collection('users')
+          .doc(userId)
+          .collection('timer_queue_state')
+          .get();
+
+      SessionPreview? current;
+      SessionPreview? upcoming;
+
+      for (final doc in queueSnapshot.docs) {
+        final data = doc.data();
+        final blocks = (data['all_blocks'] as List?) ?? const [];
+        final currentIndex =
+            (data['current_block_index'] as num?)?.toInt() ?? 0;
+        final planId = data['plan_id'] as String?;
+
+        if (blocks.isEmpty ||
+            currentIndex < 0 ||
+            currentIndex >= blocks.length) {
+          continue;
+        }
+
+        final currentBlock = blocks[currentIndex] as Map<String, dynamic>;
+        final state = (currentBlock['state'] as String?) ?? 'pending';
+        final subject = (currentBlock['subject'] as String?)?.trim();
+        final durationSeconds =
+            (currentBlock['duration_seconds'] as num?)?.toInt() ?? 0;
+
+        if (state == 'running' || state == 'paused') {
+          current = SessionPreview(
+            subject: (subject == null || subject.isEmpty)
+                ? 'Smart Session'
+                : subject,
+            durationMinutes: durationSeconds ~/ 60,
+            planId: planId,
+          );
+        }
+
+        for (var i = currentIndex; i < blocks.length; i++) {
+          final block = blocks[i] as Map<String, dynamic>;
+          final blockState = (block['state'] as String?) ?? 'pending';
+          final blockType = (block['type'] as String?) ?? 'study';
+
+          if (blockState == 'pending' && blockType == 'study') {
+            final upSubject = (block['subject'] as String?)?.trim();
+            final upDuration =
+                (block['duration_seconds'] as num?)?.toInt() ?? 0;
+            upcoming = SessionPreview(
+              subject: (upSubject == null || upSubject.isEmpty)
+                  ? 'Upcoming Session'
+                  : upSubject,
+              durationMinutes: upDuration ~/ 60,
+              planId: planId,
+            );
+            break;
+          }
+        }
+      }
+
+      if (current == null || upcoming == null) {
+        final latestPlan = await fetchLatestPlan(userId);
+        if (latestPlan != null) {
+          TrackedPlanBlock? currentBlock;
+          TrackedPlanBlock? upcomingBlock;
+
+          for (final block in latestPlan.blocks) {
+            if (currentBlock == null &&
+                block.status == PlanBlockStatus.active) {
+              currentBlock = block;
+            }
+            if (upcomingBlock == null &&
+                block.status == PlanBlockStatus.pending) {
+              upcomingBlock = block;
+            }
+            if (currentBlock != null && upcomingBlock != null) {
+              break;
+            }
+          }
+
+          if (current == null && currentBlock != null) {
+            current = SessionPreview(
+              subject: currentBlock.subject,
+              durationMinutes: currentBlock.durationMinutes,
+              planId: latestPlan.id,
+            );
+          }
+
+          if (upcoming == null && upcomingBlock != null) {
+            upcoming = SessionPreview(
+              subject: upcomingBlock.subject,
+              durationMinutes: upcomingBlock.durationMinutes,
+              planId: latestPlan.id,
+            );
+          }
+        }
+      }
+
+      return SessionFlowState(
+        upcoming: upcoming,
+        current: current,
+        recent: recent,
+      );
+    } catch (_) {
+      return const SessionFlowState.empty();
+    }
+  }
+
+  Stream<SessionFlowState> watchSessionFlowState(
+    String userId, {
+    int recentLimit = 5,
+  }) {
+    return Stream<SessionFlowState>.multi((controller) {
+      Future<void> push() async {
+        try {
+          final state = await fetchSessionFlowState(
+            userId,
+            recentLimit: recentLimit,
+          );
+          if (!controller.isClosed) {
+            controller.add(state);
+          }
+        } catch (_) {
+          if (!controller.isClosed) {
+            controller.add(const SessionFlowState.empty());
+          }
+        }
+      }
+
+      final queueSub = _firestore
+          .collection('users')
+          .doc(userId)
+          .collection('timer_queue_state')
+          .snapshots()
+          .listen((_) => unawaited(push()));
+
+      final planSub = _plansCollection
+          .where('user_id', isEqualTo: userId)
+          .limit(10)
+          .snapshots()
+          .listen((_) => unawaited(push()));
+
+      unawaited(push());
+
+      controller
+        ..onCancel = () async {
+          await queueSub.cancel();
+          await planSub.cancel();
+        };
+    });
   }
 
   InsightsSummary buildInsightsSummary(List<FocusSessionRecord> sessions) {
@@ -262,13 +607,16 @@ class InsightsService {
       );
     }
 
-    final validSessions = sessions.where((session) => session.durationSeconds > 0);
+    final validSessions = sessions.where(
+      (session) => session.durationSeconds > 0,
+    );
     final totalStudySeconds = validSessions.fold<int>(
       0,
       (total, session) => total + session.durationSeconds,
     );
 
-    final avgFocus = sessions.fold<double>(
+    final avgFocus =
+        sessions.fold<double>(
           0,
           (total, session) => total + session.focusScore,
         ) /
@@ -292,10 +640,14 @@ class InsightsService {
         continue;
       }
 
-      hourBuckets.putIfAbsent(ts.hour, () => <double>[]).add(session.focusScore);
+      hourBuckets
+          .putIfAbsent(ts.hour, () => <double>[])
+          .add(session.focusScore);
 
       final segment = _segmentForHour(ts.hour);
-      dayPartBuckets.putIfAbsent(segment, () => <double>[]).add(session.focusScore);
+      dayPartBuckets
+          .putIfAbsent(segment, () => <double>[])
+          .add(session.focusScore);
     }
 
     final bestWindow = _bestTwoHourWindow(hourBuckets);
@@ -303,7 +655,12 @@ class InsightsService {
         ? 'Not enough data yet'
         : 'You focus best at ${_formatHourRange(bestWindow, windowSize: 2)}';
 
-    const orderedSegments = <String>['Morning', 'Afternoon', 'Evening', 'Night'];
+    const orderedSegments = <String>[
+      'Morning',
+      'Afternoon',
+      'Evening',
+      'Night',
+    ];
     final timeOfDayStats = <TimeOfDayStats>[];
     for (final segment in orderedSegments) {
       final scores = dayPartBuckets[segment];
@@ -469,12 +826,15 @@ class InsightsService {
     required List<PlanBlock> blocks,
   }) async {
     final trackedBlocks = blocks
+        .asMap()
+        .entries
         .map(
-          (block) => TrackedPlanBlock(
-            subject: block.subject ?? 'Short Break',
-            durationMinutes: block.durationMinutes,
+          (entry) => TrackedPlanBlock(
+            subject: entry.value.subject ?? 'Short Break',
+            durationMinutes: entry.value.durationMinutes,
             status: PlanBlockStatus.pending,
-            type: block.type,
+            type: entry.value.type,
+            orderIndex: entry.key,
           ),
         )
         .toList();
@@ -483,6 +843,8 @@ class InsightsService {
       'user_id': userId,
       'created_at': FieldValue.serverTimestamp(),
       'updated_at': FieldValue.serverTimestamp(),
+      'plan_status': 'active',
+      'current_block_index': 0,
       'blocks': trackedBlocks.map((block) => block.toMap()).toList(),
     };
 
@@ -492,7 +854,58 @@ class InsightsService {
       id: docRef.id,
       userId: userId,
       blocks: trackedBlocks,
+      currentBlockIndex: 0,
+      planStatus: 'active',
     );
+  }
+
+  Stream<TrackedStudyPlan?> watchStudyPlan(String planId) {
+    return _plansCollection.doc(planId).snapshots().map((doc) {
+      final data = doc.data();
+      if (!doc.exists || data == null) {
+        return null;
+      }
+      return TrackedStudyPlan.fromDoc(doc.id, data);
+    });
+  }
+
+  Future<TrackedStudyPlan?> fetchLatestPlan(String userId) async {
+    final snapshot = await _plansCollection
+        .where('user_id', isEqualTo: userId)
+        .orderBy('updated_at', descending: true)
+        .limit(1)
+        .get();
+
+    if (snapshot.docs.isEmpty) {
+      return null;
+    }
+
+    final doc = snapshot.docs.first;
+    return TrackedStudyPlan.fromDoc(doc.id, doc.data());
+  }
+
+  Future<TrackedStudyPlan?> fetchPlanById(String planId) async {
+    final doc = await _plansCollection.doc(planId).get();
+    final data = doc.data();
+    if (!doc.exists || data == null) {
+      return null;
+    }
+
+    return TrackedStudyPlan.fromDoc(doc.id, data);
+  }
+
+  Future<void> syncPlanSchedule({
+    required String planId,
+    required List<TrackedPlanBlock> blocks,
+    int? currentBlockIndex,
+    String? planStatus,
+  }) async {
+    await _plansCollection.doc(planId).set({
+      'updated_at': FieldValue.serverTimestamp(),
+      'blocks': blocks.map((block) => block.toMap()).toList(),
+      if (currentBlockIndex != null) 'current_block_index': currentBlockIndex,
+      if (planStatus != null) 'plan_status': planStatus,
+    }, SetOptions(merge: true));
   }
 
   Future<void> updateBlockStatus({
@@ -531,7 +944,10 @@ class InsightsService {
     }
 
     final sortedSessions = [...sessions]
-      ..sort((a, b) => (b.timestamp ?? DateTime(1)).compareTo(a.timestamp ?? DateTime(1)));
+      ..sort(
+        (a, b) =>
+            (b.timestamp ?? DateTime(1)).compareTo(a.timestamp ?? DateTime(1)),
+      );
 
     final now = DateTime.now();
     final todayStart = DateTime(now.year, now.month, now.day);
@@ -578,7 +994,11 @@ class InsightsService {
   WeeklyGoal calculateWeeklyGoal(List<FocusSessionRecord> sessions) {
     final now = DateTime.now();
     final weekStart = now.subtract(Duration(days: now.weekday - 1));
-    final weekStartDate = DateTime(weekStart.year, weekStart.month, weekStart.day);
+    final weekStartDate = DateTime(
+      weekStart.year,
+      weekStart.month,
+      weekStart.day,
+    );
     final weekEndDate = weekStartDate.add(const Duration(days: 7));
 
     int thisWeekSessionCount = 0;
@@ -616,14 +1036,14 @@ class InsightsService {
 
   Future<void> updateStreakData(String userId, StreakData streak) async {
     try {
-      await _firestore.collection('user_streaks').doc(userId).set(
-            <String, dynamic>{
-              'user_id': userId,
-              ...streak.toMap(),
-              'updated_at': FieldValue.serverTimestamp(),
-            },
-            SetOptions(merge: true),
-          );
+      await _firestore
+          .collection('user_streaks')
+          .doc(userId)
+          .set(<String, dynamic>{
+            'user_id': userId,
+            ...streak.toMap(),
+            'updated_at': FieldValue.serverTimestamp(),
+          }, SetOptions(merge: true));
     } catch (_) {}
   }
 
@@ -636,8 +1056,11 @@ class InsightsService {
     } catch (_) {}
 
     final now = DateTime.now();
-    final weekStart = DateTime(now.year, now.month, now.day)
-        .subtract(Duration(days: now.weekday - 1));
+    final weekStart = DateTime(
+      now.year,
+      now.month,
+      now.day,
+    ).subtract(Duration(days: now.weekday - 1));
 
     return WeeklyGoal(
       targetSessions: 5,
@@ -733,8 +1156,9 @@ class InsightsService {
       }
 
       final snapshot = await query.orderBy('timestamp').get();
-      final sessions =
-          snapshot.docs.map((doc) => FocusSessionRecord.fromMap(doc.data())).toList();
+      final sessions = snapshot.docs
+          .map((doc) => FocusSessionRecord.fromMap(doc.data()))
+          .toList();
 
       if (sessions.isEmpty) {
         return 'user_id,subject,session_duration,focus_score,distraction_time,completed,timestamp\n';
@@ -742,7 +1166,8 @@ class InsightsService {
 
       final buffer = StringBuffer();
       buffer.writeln(
-          'user_id,subject,session_duration,focus_score,distraction_time,completed,timestamp');
+        'user_id,subject,session_duration,focus_score,distraction_time,completed,timestamp',
+      );
 
       for (final session in sessions) {
         final timestamp = session.timestamp?.toIso8601String() ?? '';
@@ -817,7 +1242,9 @@ class InsightsService {
     final entries = map.entries.map((e) {
       final key = e.key;
       final value = e.value;
-      final encodedValue = value is String ? '"${value.replaceAll('"', '\\"')}"' : value;
+      final encodedValue = value is String
+          ? '"${value.replaceAll('"', '\\"')}"'
+          : value;
       return '"$key":$encodedValue';
     });
     return '{${entries.join(',')}}';
