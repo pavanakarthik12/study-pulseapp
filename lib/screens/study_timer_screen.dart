@@ -5,7 +5,6 @@ import 'dart:ui';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_animate/flutter_animate.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:percent_indicator/percent_indicator.dart';
 
@@ -27,7 +26,7 @@ class StudyTimerScreen extends StatefulWidget {
 }
 
 class _StudyTimerScreenState extends State<StudyTimerScreen>
-  with WidgetsBindingObserver {
+    with WidgetsBindingObserver {
   static const int _defaultSeconds = 25 * 60;
   static const List<_FocusStream> _streams = [
     _FocusStream(
@@ -233,9 +232,7 @@ class _StudyTimerScreenState extends State<StudyTimerScreen>
       if (userId == null || userId.isEmpty) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Please login to save sessions.'),
-            ),
+            const SnackBar(content: Text('Please login to save sessions.')),
           );
         }
         return;
@@ -387,10 +384,7 @@ class _StudyTimerScreenState extends State<StudyTimerScreen>
                         hint: 'What are you focusing on?',
                         prefixIcon: Icons.menu_book_rounded,
                       ),
-                    )
-                        .animate(delay: 80.ms)
-                        .fade(duration: 420.ms)
-                        .slideY(begin: 0.12, end: 0, duration: 420.ms),
+                    ),
                     const SizedBox(height: AppTheme.xl),
                     Row(
                       mainAxisAlignment: MainAxisAlignment.center,
@@ -404,7 +398,7 @@ class _StudyTimerScreenState extends State<StudyTimerScreen>
                         else
                           _buildTimerButton(
                             icon: Icons.play_arrow_rounded,
-                            label: isFresh ? 'Start' : 'Resume',
+                            label: isFresh ? 'Start Session' : 'Continue Plan',
                             onTap: _start,
                           ),
                         const SizedBox(width: AppTheme.lg),
@@ -414,10 +408,7 @@ class _StudyTimerScreenState extends State<StudyTimerScreen>
                           onTap: _stop,
                         ),
                       ],
-                    )
-                        .animate(delay: 120.ms)
-                        .fade(duration: 500.ms)
-                        .slideY(begin: 0.15, end: 0, duration: 500.ms),
+                    ),
                     const Spacer(flex: 2),
                   ],
                 ),
@@ -442,51 +433,36 @@ class _StudyTimerScreenState extends State<StudyTimerScreen>
   }
 
   Widget _buildTimerDisplay(BuildContext context, bool isFinished) {
-    return Container(
-      decoration: BoxDecoration(
-        shape: BoxShape.circle,
-        boxShadow: [
-          BoxShadow(
-            color: AppTheme.accentPrimary.withValues(alpha: 0.3),
-            blurRadius: 42,
-            spreadRadius: 10,
+    return CircularPercentIndicator(
+      radius: 120,
+      lineWidth: 12,
+      animation: true,
+      animateFromLastPercent: true,
+      animationDuration: 900,
+      circularStrokeCap: CircularStrokeCap.round,
+      percent: _progress,
+      backgroundColor: AppTheme.bgCard,
+      progressColor: AppTheme.accentSecondary,
+      center: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            _timeText,
+            style: Theme.of(context).textTheme.displayMedium?.copyWith(
+              fontWeight: FontWeight.w600,
+              color: AppTheme.textPrimary,
+            ),
+          ),
+          const SizedBox(height: AppTheme.md),
+          Text(
+            isFinished ? 'Complete' : 'Focus time',
+            style: Theme.of(
+              context,
+            ).textTheme.bodyMedium?.copyWith(color: AppTheme.textSecondary),
           ),
         ],
       ),
-      child: CircularPercentIndicator(
-        radius: 120,
-        lineWidth: 12,
-        animation: true,
-        animateFromLastPercent: true,
-        animationDuration: 900,
-        circularStrokeCap: CircularStrokeCap.round,
-        percent: _progress,
-        backgroundColor: AppTheme.bgCard,
-        progressColor: AppTheme.accentSecondary,
-        center: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              _timeText,
-              style: Theme.of(context).textTheme.displayMedium?.copyWith(
-                fontWeight: FontWeight.w700,
-                color: AppTheme.textPrimary,
-              ),
-            ),
-            const SizedBox(height: AppTheme.md),
-            Text(
-              isFinished ? '✓ Complete' : 'Focus time',
-              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                color: AppTheme.textSecondary,
-              ),
-            ),
-          ],
-        ),
-      ),
-    )
-        .animate()
-        .fade(duration: 500.ms)
-        .scale(begin: const Offset(0.92, 0.92), duration: 500.ms);
+    );
   }
 
   Widget _buildTimerButton({
@@ -507,18 +483,11 @@ class _StudyTimerScreenState extends State<StudyTimerScreen>
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(AppTheme.radiusLarge),
             color: AppTheme.bgCard,
-            border: Border.all(
-              color: AppTheme.bgCardLight,
-              width: 1,
-            ),
+            border: Border.all(color: AppTheme.bgCardLight, width: 1),
           ),
           child: Column(
             children: [
-              Icon(
-                icon,
-                color: AppTheme.accentSecondary,
-                size: 28,
-              ),
+              Icon(icon, color: AppTheme.accentSecondary, size: 28),
               const SizedBox(height: AppTheme.sm),
               Text(
                 label,
@@ -561,18 +530,7 @@ class _FocusRadioCard extends StatelessWidget {
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(AppTheme.radiusLarge),
         color: AppTheme.bgCard,
-        border: Border.all(
-          color: AppTheme.bgCardLight,
-          width: 1,
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: AppTheme.accentSecondary
-                .withValues(alpha: isPlaying ? 0.28 : 0.08),
-            blurRadius: isPlaying ? 24 : 8,
-            spreadRadius: isPlaying ? 2 : 0,
-          ),
-        ],
+        border: Border.all(color: AppTheme.bgCardLight, width: 1),
       ),
       child: Row(
         children: [
@@ -613,34 +571,30 @@ class _FocusRadioCard extends StatelessWidget {
             duration: const Duration(milliseconds: 220),
             child: isSwitching
                 ? Container(
-              key: const ValueKey<String>('switching'),
-              height: 40,
-              width: 40,
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
-                color: AppTheme.bgCardLight,
-              ),
-              padding: const EdgeInsets.all(AppTheme.sm),
-              child: const CircularProgressIndicator(
-                strokeWidth: 2,
-                valueColor: AlwaysStoppedAnimation(AppTheme.accentSecondary),
-              ),
-            )
+                    key: const ValueKey<String>('switching'),
+                    height: 40,
+                    width: 40,
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
+                      color: AppTheme.bgCardLight,
+                    ),
+                    padding: const EdgeInsets.all(AppTheme.sm),
+                    child: const CircularProgressIndicator(
+                      strokeWidth: 2,
+                      valueColor: AlwaysStoppedAnimation(
+                        AppTheme.accentSecondary,
+                      ),
+                    ),
+                  )
                 : _MiniActionButton(
-              key: const ValueKey<String>('switch'),
-              icon: Icons.swap_horiz_rounded,
-              onTap: onSwitchStream,
-            ),
+                    key: const ValueKey<String>('switch'),
+                    icon: Icons.swap_horiz_rounded,
+                    onTap: onSwitchStream,
+                  ),
           ),
         ],
       ),
-    )
-        .animate(target: isPlaying ? 1 : 0)
-        .scale(
-          begin: const Offset(0.99, 0.99),
-          end: const Offset(1.0, 1.0),
-          duration: 260.ms,
-        );
+    );
   }
 }
 
@@ -673,16 +627,9 @@ class _MiniActionButtonState extends State<_MiniActionButton> {
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
             color: AppTheme.bgCardLight,
-            border: Border.all(
-              color: AppTheme.bgCardLight,
-              width: 1,
-            ),
+            border: Border.all(color: AppTheme.bgCardLight, width: 1),
           ),
-          child: Icon(
-            widget.icon,
-            size: 20,
-            color: AppTheme.accentSecondary,
-          ),
+          child: Icon(widget.icon, size: 20, color: AppTheme.accentSecondary),
         ),
       ),
     );
@@ -746,8 +693,8 @@ class _FocusScoreDialog extends StatelessWidget {
                 Text(
                   'Focus Score',
                   style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                        fontWeight: FontWeight.w700,
-                      ),
+                    fontWeight: FontWeight.w700,
+                  ),
                 ),
                 const SizedBox(height: 18),
                 TweenAnimationBuilder<double>(
@@ -766,11 +713,10 @@ class _FocusScoreDialog extends StatelessWidget {
                       center: Text(
                         '${(value * 100).round()}%\nFocus',
                         textAlign: TextAlign.center,
-                        style:
-                            Theme.of(context).textTheme.titleLarge?.copyWith(
-                                  fontWeight: FontWeight.w700,
-                                  color: _scoreColor,
-                                ),
+                        style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                          fontWeight: FontWeight.w700,
+                          color: _scoreColor,
+                        ),
                       ),
                     );
                   },
@@ -780,16 +726,16 @@ class _FocusScoreDialog extends StatelessWidget {
                   _message,
                   textAlign: TextAlign.center,
                   style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                        color: Colors.white.withValues(alpha: 0.86),
-                      ),
+                    color: Colors.white.withValues(alpha: 0.86),
+                  ),
                 ),
                 const SizedBox(height: 10),
                 Text(
                   'Focused $focusedSeconds sec out of $totalSeconds sec',
                   textAlign: TextAlign.center,
                   style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: Colors.white.withValues(alpha: 0.62),
-                      ),
+                    color: Colors.white.withValues(alpha: 0.62),
+                  ),
                 ),
               ],
             ),

@@ -138,12 +138,17 @@ class _InsightsDashboardScreenState extends State<InsightsDashboardScreen> {
       final sessions = await _insightsService.fetchRecentSessions(
         userId: userId,
       );
+      final completedSessions = sessions
+          .where((session) => session.completed)
+          .toList();
 
       final summary = _insightsService.buildInsightsSummary(sessions);
       final trend = _insightsService.buildRecentDailyTrend(sessions);
 
-      final streak = _insightsService.calculateStreakFromSessions(sessions);
-      final goal = _insightsService.calculateWeeklyGoal(sessions);
+      final streak = _insightsService.calculateStreakFromSessions(
+        completedSessions,
+      );
+      final goal = _insightsService.calculateWeeklyGoal(completedSessions);
 
       unawaited(_insightsService.updateStreakData(userId, streak));
 
@@ -407,20 +412,7 @@ class _InsightsDashboardScreenState extends State<InsightsDashboardScreen> {
     );
   }
 
-  Color _statusColor(PlanBlockStatus status) {
-    switch (status) {
-      case PlanBlockStatus.active:
-        return const Color(0xFF4F7CFF);
-      case PlanBlockStatus.completed:
-        return const Color(0xFF4BD37B);
-      case PlanBlockStatus.skipped:
-        return const Color(0xFFFF6B6B);
-      case PlanBlockStatus.pending:
-        return Colors.white.withValues(alpha: 0.45);
-    }
-  }
-
-  String _statusLabel(PlanBlockStatus status) {
+  String _statusLabel(PlanBlockStatus status, {bool isNextUpcoming = false}) {
     switch (status) {
       case PlanBlockStatus.active:
         return 'Active';
@@ -429,7 +421,7 @@ class _InsightsDashboardScreenState extends State<InsightsDashboardScreen> {
       case PlanBlockStatus.skipped:
         return 'Skipped';
       case PlanBlockStatus.pending:
-        return 'Pending';
+        return isNextUpcoming ? 'Up Next' : 'Upcoming';
     }
   }
 
@@ -644,7 +636,7 @@ class _InsightsDashboardScreenState extends State<InsightsDashboardScreen> {
                               physics: const NeverScrollableScrollPhysics(),
                               crossAxisSpacing: 12,
                               mainAxisSpacing: 12,
-                              childAspectRatio: 1.55,
+                              childAspectRatio: 1.38,
                               children: [
                                 _MetricCard(
                                   title: 'Total Study Time',
@@ -827,7 +819,7 @@ class _InsightsDashboardScreenState extends State<InsightsDashboardScreen> {
                   child: Text(
                     _isLocalPlanId(_activePlanId!)
                         ? 'Plan is stored locally. Login or restore connectivity to sync to Firestore.'
-                        : 'Plan is synced to Firestore. Mark blocks as done or skipped to track behavior.',
+                        : 'Plan is synced to Firestore. Update blocks to keep your progress accurate.',
                     style: theme.textTheme.bodySmall?.copyWith(
                       color: _textSecondary,
                     ),
@@ -841,21 +833,93 @@ class _InsightsDashboardScreenState extends State<InsightsDashboardScreen> {
                   ),
                 ),
               if (_trackedBlocks.isNotEmpty)
+                Builder(
+                  builder: (context) {
+                    TrackedPlanBlock? current;
+                    TrackedPlanBlock? next;
+
+                    for (final block in _trackedBlocks) {
+                      if (current == null &&
+                          block.status == PlanBlockStatus.active) {
+                        current = block;
+                      }
+                      if (next == null &&
+                          block.status == PlanBlockStatus.pending) {
+                        next = block;
+                      }
+                      if (current != null && next != null) {
+                        break;
+                      }
+                    }
+
+                    if (current == null && next == null) {
+                      return const SizedBox.shrink();
+                    }
+
+                    return Padding(
+                      padding: const EdgeInsets.only(bottom: 12),
+                      child: _SectionContainer(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            if (current != null)
+                              _PlanSummaryRow(
+                                title: 'Current Session',
+                                subject: current.subject,
+                                durationMinutes: current.durationMinutes,
+                                label: 'Active',
+                                labelColor: _accent,
+                              ),
+                            if (current != null && next != null)
+                              const SizedBox(height: 10),
+                            if (next != null)
+                              _PlanSummaryRow(
+                                title: 'Next Session',
+                                subject: next.subject,
+                                durationMinutes: next.durationMinutes,
+                                label: 'Up Next',
+                                labelColor: _textSecondary,
+                              ),
+                          ],
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              if (_trackedBlocks.isNotEmpty)
                 ..._trackedBlocks.asMap().entries.map(
                   (entry) => Padding(
                     padding: const EdgeInsets.only(bottom: 10),
                     child: _TrackedPlanBlockTile(
                       block: entry.value,
-                      statusColor: _statusColor(entry.value.status),
-                      statusLabel: _statusLabel(entry.value.status),
+                      statusLabel: _statusLabel(
+                        entry.value.status,
+                        isNextUpcoming:
+                            entry.value.status == PlanBlockStatus.pending &&
+                            _trackedBlocks.indexWhere(
+                                  (b) => b.status == PlanBlockStatus.pending,
+                                ) ==
+                                entry.key,
+                      ),
                       isUpdating: _updatingBlockIndexes.contains(entry.key),
-                      onDone: entry.value.status == PlanBlockStatus.pending
+                      isActive: entry.value.status == PlanBlockStatus.active,
+                      isNextUpcoming:
+                          entry.value.status == PlanBlockStatus.pending &&
+                          _trackedBlocks.indexWhere(
+                                (b) => b.status == PlanBlockStatus.pending,
+                              ) ==
+                              entry.key,
+                      onDone:
+                          (entry.value.status == PlanBlockStatus.pending ||
+                              entry.value.status == PlanBlockStatus.active)
                           ? () => _updateBlockStatus(
                               index: entry.key,
                               status: PlanBlockStatus.completed,
                             )
                           : null,
-                      onSkip: entry.value.status == PlanBlockStatus.pending
+                      onSkip:
+                          (entry.value.status == PlanBlockStatus.pending ||
+                              entry.value.status == PlanBlockStatus.active)
                           ? () => _updateBlockStatus(
                               index: entry.key,
                               status: PlanBlockStatus.skipped,
@@ -867,7 +931,7 @@ class _InsightsDashboardScreenState extends State<InsightsDashboardScreen> {
               if (_trackedBlocks.isNotEmpty) ...[
                 const SizedBox(height: AppTheme.lg),
                 PrimaryButton(
-                  label: 'Start Study Session',
+                  label: 'Start Session',
                   onPressed: _startStudySession,
                   fullWidth: true,
                 ),
@@ -884,17 +948,19 @@ class _TrackedPlanBlockTile extends StatelessWidget {
   const _TrackedPlanBlockTile({
     required this.block,
     required this.statusLabel,
-    required this.statusColor,
     required this.onDone,
     required this.onSkip,
+    required this.isActive,
+    required this.isNextUpcoming,
     this.isUpdating = false,
   });
 
   final TrackedPlanBlock block;
   final String statusLabel;
-  final Color statusColor;
   final VoidCallback? onDone;
   final VoidCallback? onSkip;
+  final bool isActive;
+  final bool isNextUpcoming;
   final bool isUpdating;
 
   @override
@@ -904,11 +970,21 @@ class _TrackedPlanBlockTile extends StatelessWidget {
     return _SectionContainer(
       child: Container(
         decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: statusColor.withValues(alpha: 0.85)),
-          color: statusColor.withValues(alpha: 0.08),
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(
+            color: isActive
+                ? _InsightsDashboardScreenState._accent.withValues(alpha: 0.6)
+                : _InsightsDashboardScreenState._cardElevated,
+          ),
+          color:
+              block.status == PlanBlockStatus.completed ||
+                  block.status == PlanBlockStatus.skipped
+              ? _InsightsDashboardScreenState._card.withValues(alpha: 0.75)
+              : isActive
+              ? _InsightsDashboardScreenState._accent.withValues(alpha: 0.08)
+              : _InsightsDashboardScreenState._card,
         ),
-        padding: const EdgeInsets.all(12),
+        padding: const EdgeInsets.all(16),
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -916,7 +992,9 @@ class _TrackedPlanBlockTile extends StatelessWidget {
               block.type == PlanBlockType.study
                   ? Icons.menu_book_rounded
                   : Icons.free_breakfast_rounded,
-              color: statusColor,
+              color: isActive
+                  ? _InsightsDashboardScreenState._accent
+                  : _InsightsDashboardScreenState._textSecondary,
             ),
             const SizedBox(width: 12),
             Expanded(
@@ -930,6 +1008,11 @@ class _TrackedPlanBlockTile extends StatelessWidget {
                           block.subject,
                           style: theme.textTheme.titleMedium?.copyWith(
                             fontWeight: FontWeight.w600,
+                            color:
+                                block.status == PlanBlockStatus.completed ||
+                                    block.status == PlanBlockStatus.skipped
+                                ? _InsightsDashboardScreenState._textSecondary
+                                : _InsightsDashboardScreenState._textPrimary,
                           ),
                         ),
                       ),
@@ -940,13 +1023,21 @@ class _TrackedPlanBlockTile extends StatelessWidget {
                         ),
                         decoration: BoxDecoration(
                           borderRadius: BorderRadius.circular(999),
-                          color: statusColor.withValues(alpha: 0.2),
+                          color:
+                              (isActive
+                                      ? _InsightsDashboardScreenState._accent
+                                      : _InsightsDashboardScreenState
+                                            ._cardElevated)
+                                  .withValues(alpha: 0.25),
                         ),
                         child: Text(
                           statusLabel,
-                          style: theme.textTheme.labelMedium?.copyWith(
-                            color: statusColor,
-                            fontWeight: FontWeight.w700,
+                          style: theme.textTheme.labelSmall?.copyWith(
+                            fontSize: 12,
+                            color: isActive
+                                ? _InsightsDashboardScreenState._accent
+                                : _InsightsDashboardScreenState._textSecondary,
+                            fontWeight: FontWeight.w500,
                           ),
                         ),
                       ),
@@ -959,42 +1050,36 @@ class _TrackedPlanBlockTile extends StatelessWidget {
                       color: _InsightsDashboardScreenState._textSecondary,
                     ),
                   ),
+                  if (isNextUpcoming) ...[
+                    const SizedBox(height: 4),
+                    Text(
+                      'Up Next',
+                      style: theme.textTheme.labelSmall?.copyWith(
+                        fontSize: 12,
+                        color: _InsightsDashboardScreenState._accent,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ],
                   const SizedBox(height: 10),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: OutlinedButton.icon(
-                          onPressed: isUpdating ? null : onDone,
-                          icon: const Icon(Icons.check_circle_outline),
-                          label: const Text('Mark Done'),
-                          style: OutlinedButton.styleFrom(
-                            foregroundColor: const Color(0xFF4BD37B),
-                            side: BorderSide(
-                              color: const Color(
-                                0xFF4BD37B,
-                              ).withValues(alpha: 0.65),
-                            ),
+                  if (onDone != null || onSkip != null)
+                    Row(
+                      children: [
+                        Expanded(
+                          child: OutlinedButton(
+                            onPressed: isUpdating ? null : onDone,
+                            child: const Text('Completed'),
                           ),
                         ),
-                      ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: OutlinedButton.icon(
-                          onPressed: isUpdating ? null : onSkip,
-                          icon: const Icon(Icons.cancel_outlined),
-                          label: const Text('Skip'),
-                          style: OutlinedButton.styleFrom(
-                            foregroundColor: const Color(0xFFFF6B6B),
-                            side: BorderSide(
-                              color: const Color(
-                                0xFFFF6B6B,
-                              ).withValues(alpha: 0.65),
-                            ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: OutlinedButton(
+                            onPressed: isUpdating ? null : onSkip,
+                            child: const Text('Skip'),
                           ),
                         ),
-                      ),
-                    ],
-                  ),
+                      ],
+                    ),
                   if (isUpdating)
                     Padding(
                       padding: const EdgeInsets.only(top: 10),
@@ -1011,6 +1096,69 @@ class _TrackedPlanBlockTile extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+class _PlanSummaryRow extends StatelessWidget {
+  const _PlanSummaryRow({
+    required this.title,
+    required this.subject,
+    required this.durationMinutes,
+    required this.label,
+    required this.labelColor,
+  });
+
+  final String title;
+  final String subject;
+  final int durationMinutes;
+  final String label;
+  final Color labelColor;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return Row(
+      children: [
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                title,
+                style: theme.textTheme.labelSmall?.copyWith(
+                  color: _InsightsDashboardScreenState._textSecondary,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                '$subject · $durationMinutes min',
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color: _InsightsDashboardScreenState._textPrimary,
+                ),
+              ),
+            ],
+          ),
+        ),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(999),
+            color: _InsightsDashboardScreenState._cardElevated,
+          ),
+          child: Text(
+            label,
+            style: theme.textTheme.labelSmall?.copyWith(
+              fontSize: 12,
+              fontWeight: FontWeight.w500,
+              color: labelColor,
+            ),
+          ),
+        ),
+      ],
     );
   }
 }
@@ -1038,17 +1186,26 @@ class _MetricCard extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Icon(icon, size: 18, color: _InsightsDashboardScreenState._accent),
-          const SizedBox(height: 8),
-          Text(
-            value,
-            style: Theme.of(context).textTheme.titleMedium?.copyWith(
-              fontWeight: FontWeight.w500,
-              color: _InsightsDashboardScreenState._textPrimary,
+          const SizedBox(height: 6),
+          Expanded(
+            child: Align(
+              alignment: Alignment.topLeft,
+              child: Text(
+                value,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                  fontWeight: FontWeight.w500,
+                  color: _InsightsDashboardScreenState._textPrimary,
+                ),
+              ),
             ),
           ),
           const SizedBox(height: 4),
           Text(
             title,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
             style: Theme.of(context).textTheme.bodySmall?.copyWith(
               color: _InsightsDashboardScreenState._textSecondary,
             ),

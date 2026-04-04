@@ -1,5 +1,4 @@
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:flutter_animate/flutter_animate.dart';
 import 'package:flutter/material.dart';
 
 import '../core/theme.dart';
@@ -58,9 +57,9 @@ class _SignupScreenState extends State<SignupScreen> {
       if (!mounted) {
         return;
       }
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(e.message ?? 'Signup failed')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(e.message ?? 'Signup failed')));
     } finally {
       if (mounted) {
         setState(() {
@@ -87,13 +86,10 @@ class _SignupScreenState extends State<SignupScreen> {
                       'Study Pulse',
                       textAlign: TextAlign.center,
                       style: Theme.of(context).textTheme.displaySmall?.copyWith(
-                        fontWeight: FontWeight.w700,
+                        fontWeight: FontWeight.w600,
                         letterSpacing: 0.5,
                       ),
-                    )
-                        .animate()
-                        .fade(duration: 450.ms)
-                        .slideY(begin: 0.12, end: 0, duration: 450.ms),
+                    ),
                     const SizedBox(height: AppTheme.md),
                     Text(
                       'Create your account',
@@ -102,10 +98,7 @@ class _SignupScreenState extends State<SignupScreen> {
                         color: AppTheme.textSecondary,
                         fontWeight: FontWeight.w500,
                       ),
-                    )
-                        .animate(delay: 120.ms)
-                        .fade(duration: 450.ms)
-                        .slideY(begin: 0.12, end: 0, duration: 450.ms),
+                    ),
                     const SizedBox(height: AppTheme.xl),
                     ModernCard(
                       child: Form(
@@ -159,9 +152,8 @@ class _SignupScreenState extends State<SignupScreen> {
                               children: [
                                 Text(
                                   'Already have an account? ',
-                                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                                    color: AppTheme.textSecondary,
-                                  ),
+                                  style: Theme.of(context).textTheme.bodyMedium
+                                      ?.copyWith(color: AppTheme.textSecondary),
                                 ),
                                 TertiaryButton(
                                   label: 'Sign in',
@@ -174,10 +166,7 @@ class _SignupScreenState extends State<SignupScreen> {
                           ],
                         ),
                       ),
-                    )
-                        .animate(delay: 220.ms)
-                        .fade(duration: 500.ms)
-                        .slideY(begin: 0.08, end: 0, duration: 500.ms),
+                    ),
                   ],
                 ),
               ),

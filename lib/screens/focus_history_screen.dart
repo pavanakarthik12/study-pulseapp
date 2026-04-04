@@ -57,9 +57,8 @@ class FocusHistoryScreen extends StatelessWidget {
                     const SizedBox(width: AppTheme.md),
                     Text(
                       'Focus History',
-                      style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                            fontWeight: FontWeight.w700,
-                          ),
+                      style: Theme.of(context).textTheme.headlineSmall
+                          ?.copyWith(fontWeight: FontWeight.w700),
                     ),
                   ],
                 ),
@@ -67,8 +66,8 @@ class FocusHistoryScreen extends StatelessWidget {
                 Text(
                   'Latest 10 sessions for ML data verification',
                   style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                        color: Colors.white.withValues(alpha: 0.7),
-                      ),
+                    color: AppTheme.textSecondary,
+                  ),
                 ),
                 const SizedBox(height: 16),
                 Expanded(
@@ -94,9 +93,8 @@ class FocusHistoryScreen extends StatelessWidget {
                           child: Text(
                             'No sessions yet. Complete a focus session to see data here.',
                             textAlign: TextAlign.center,
-                            style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                                  color: Colors.white.withValues(alpha: 0.8),
-                                ),
+                            style: Theme.of(context).textTheme.bodyLarge
+                                ?.copyWith(color: AppTheme.textSecondary),
                           ),
                         );
                       }
@@ -115,13 +113,11 @@ class FocusHistoryScreen extends StatelessWidget {
                           final ts = data['timestamp'] as Timestamp?;
 
                           return Container(
-                            padding: const EdgeInsets.all(14),
+                            padding: const EdgeInsets.all(16),
                             decoration: BoxDecoration(
-                              borderRadius: BorderRadius.circular(18),
-                              color: Colors.white.withValues(alpha: 0.1),
-                              border: Border.all(
-                                color: Colors.white.withValues(alpha: 0.18),
-                              ),
+                              borderRadius: BorderRadius.circular(20),
+                              color: AppTheme.bgCard,
+                              border: Border.all(color: AppTheme.bgCardLight),
                             ),
                             child: Row(
                               children: [
@@ -131,20 +127,20 @@ class FocusHistoryScreen extends StatelessWidget {
                                   percent: (score / 100).clamp(0.0, 1.0),
                                   animation: true,
                                   progressColor: _scoreColor(score),
-                                  backgroundColor:
-                                      Colors.white.withValues(alpha: 0.13),
+                                  backgroundColor: AppTheme.bgCardLight,
                                   center: Text(
                                     '${score.round()}%',
                                     style: Theme.of(context)
                                         .textTheme
                                         .labelLarge
-                                        ?.copyWith(fontWeight: FontWeight.w700),
+                                        ?.copyWith(fontWeight: FontWeight.w600),
                                   ),
                                 ),
                                 const SizedBox(width: 14),
                                 Expanded(
                                   child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
                                     children: [
                                       Text(
                                         subject == null || subject.isEmpty
@@ -166,8 +162,7 @@ class FocusHistoryScreen extends StatelessWidget {
                                             .textTheme
                                             .bodyMedium
                                             ?.copyWith(
-                                              color: Colors.white
-                                                  .withValues(alpha: 0.75),
+                                              color: AppTheme.textSecondary,
                                             ),
                                       ),
                                       const SizedBox(height: 2),
@@ -177,8 +172,7 @@ class FocusHistoryScreen extends StatelessWidget {
                                             .textTheme
                                             .bodySmall
                                             ?.copyWith(
-                                              color: Colors.white
-                                                  .withValues(alpha: 0.58),
+                                              color: AppTheme.textTertiary,
                                             ),
                                       ),
                                     ],

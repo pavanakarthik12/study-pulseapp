@@ -61,6 +61,7 @@ class _MultiBlockTimerScreenState extends State<MultiBlockTimerScreen>
   int _currentStreamIndex = 0;
   bool _isSwitchingStream = false;
   DateTime? _backgroundedAt;
+  bool _endingPlanEarly = false;
 
   _FocusStream get _currentStream => _streams[_currentStreamIndex];
 
@@ -93,16 +94,15 @@ class _MultiBlockTimerScreenState extends State<MultiBlockTimerScreen>
     } catch (e) {
       debugPrint('Error initializing timer: $e');
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error initializing timer: $e')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Error initializing timer: $e')));
       }
     }
   }
 
   void _setupListeners() {
-    _queueSubscription =
-        _timerService.queueStateStream.listen((queueState) {
+    _queueSubscription = _timerService.queueStateStream.listen((queueState) {
       if (mounted) {
         setState(() {
           _queueState = queueState;
@@ -110,13 +110,16 @@ class _MultiBlockTimerScreenState extends State<MultiBlockTimerScreen>
       }
     });
 
-    _blockCompleteSubscription = _timerService.blockCompleteStream.listen(
-      (block) {
-        _showBlockComplete(block);
-      },
-    );
+    _blockCompleteSubscription = _timerService.blockCompleteStream.listen((
+      block,
+    ) {
+      _showBlockComplete(block);
+    });
 
     _planCompleteSubscription = _timerService.planCompleteStream.listen((_) {
+      if (_endingPlanEarly) {
+        return;
+      }
       _showPlanComplete();
     });
 
@@ -189,7 +192,9 @@ class _MultiBlockTimerScreenState extends State<MultiBlockTimerScreen>
 
     try {
       await _audioPlayer.stop();
-      setState(() => _currentStreamIndex = (_currentStreamIndex + 1) % _streams.length);
+      setState(
+        () => _currentStreamIndex = (_currentStreamIndex + 1) % _streams.length,
+      );
       await Future.delayed(const Duration(milliseconds: 200));
       _playCurrentStream();
     } finally {
@@ -279,7 +284,7 @@ class _MultiBlockTimerScreenState extends State<MultiBlockTimerScreen>
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
-          '✓ ${block.subject} complete!',
+          '${block.subject} completed.',
           style: const TextStyle(fontWeight: FontWeight.w600),
         ),
         backgroundColor: AppTheme.statusSuccess,
@@ -297,7 +302,7 @@ class _MultiBlockTimerScreenState extends State<MultiBlockTimerScreen>
       builder: (ctx) => AlertDialog(
         backgroundColor: AppTheme.bgCard,
         title: Text(
-          '🎉 Study Plan Complete!',
+          'Study Plan Complete',
           style: Theme.of(context).textTheme.titleLarge,
         ),
         content: Column(
@@ -311,20 +316,62 @@ class _MultiBlockTimerScreenState extends State<MultiBlockTimerScreen>
             const SizedBox(height: AppTheme.md),
             Text(
               'Total time: ${_formatDuration(Duration(seconds: _queueState?.totalElapsedSeconds ?? 0))}',
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                color: AppTheme.textSecondary,
-              ),
+              style: Theme.of(
+                context,
+              ).textTheme.bodySmall?.copyWith(color: AppTheme.textSecondary),
             ),
           ],
         ),
         actions: [
+          TextButton(onPressed: _finishSession, child: const Text('Finish')),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _confirmEndPlan() async {
+    final shouldEnd = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppTheme.bgCard,
+        title: Text('End Plan', style: Theme.of(context).textTheme.titleLarge),
+        content: Text(
+          'Are you sure you want to end this plan? Remaining blocks will be marked as skipped.',
+          style: Theme.of(context).textTheme.bodyMedium,
+        ),
+        actions: [
           TextButton(
-            onPressed: _finishSession,
-            child: const Text('Finish'),
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('End Plan'),
           ),
         ],
       ),
     );
+
+    if (shouldEnd != true) {
+      return;
+    }
+
+    _endingPlanEarly = true;
+    _audioPlayer.stop();
+    await _timerService.endPlanEarly();
+
+    if (!mounted) {
+      return;
+    }
+
+    Navigator.of(context).pop();
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Plan ended early. Remaining blocks skipped.'),
+        ),
+      );
+    }
   }
 
   String _formatTime(int seconds) {
@@ -347,13 +394,14 @@ class _MultiBlockTimerScreenState extends State<MultiBlockTimerScreen>
     if (_queueState == null) {
       return Scaffold(
         backgroundColor: AppTheme.bgDeepDark,
-        body: const Center(
-          child: CircularProgressIndicator(),
-        ),
+        body: const Center(child: CircularProgressIndicator()),
       );
     }
 
     final current = _queueState!.currentBlock;
+    final nextUpcoming = _queueState!.upcomingBlocks.isNotEmpty
+        ? _queueState!.upcomingBlocks.first
+        : null;
     final remaining = current?.remainingSeconds ?? 0;
     final duration = current?.durationSeconds ?? 1;
     final progress = current != null ? current.progress : 0.0;
@@ -384,13 +432,12 @@ class _MultiBlockTimerScreenState extends State<MultiBlockTimerScreen>
                         ),
                         Text(
                           'Study Plan',
-                          style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                            fontWeight: FontWeight.w700,
-                          ),
+                          style: Theme.of(context).textTheme.titleLarge
+                              ?.copyWith(fontWeight: FontWeight.w700),
                         ),
                         TextButton(
-                          onPressed: _finishSession,
-                          child: const Text('Finish'),
+                          onPressed: _confirmEndPlan,
+                          child: const Text('End Plan'),
                         ),
                       ],
                     ),
@@ -404,23 +451,60 @@ class _MultiBlockTimerScreenState extends State<MultiBlockTimerScreen>
                       progressColor: AppTheme.accentSecondary,
                     ),
 
+                    const SizedBox(height: 12),
+                    ModernCard(
+                      child: Column(
+                        children: [
+                          if (current != null)
+                            _SessionSummaryRow(
+                              title: 'Current Session',
+                              subject: current.subject,
+                              durationMinutes: current.durationSeconds ~/ 60,
+                              label: 'Active',
+                              labelColor: AppTheme.accentSecondary,
+                            ),
+                          if (current != null && nextUpcoming != null)
+                            const SizedBox(height: 10),
+                          if (nextUpcoming != null)
+                            _SessionSummaryRow(
+                              title: 'Next Session',
+                              subject: nextUpcoming.subject,
+                              durationMinutes:
+                                  nextUpcoming.durationSeconds ~/ 60,
+                              label: 'Up Next',
+                              labelColor: AppTheme.textSecondary,
+                            ),
+                        ],
+                      ),
+                    ),
+
                     const SizedBox(height: AppTheme.xl),
 
                     // Current block display
                     if (current != null) ...[
                       Text(
                         current.subject,
-                        style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                          fontWeight: FontWeight.w700,
-                          color: AppTheme.accentPrimary,
-                        ),
+                        style: Theme.of(context).textTheme.headlineSmall
+                            ?.copyWith(
+                              fontWeight: FontWeight.w700,
+                              color: AppTheme.accentPrimary,
+                            ),
                         textAlign: TextAlign.center,
                       ),
                       const SizedBox(height: AppTheme.md),
                       Text(
-                        current.type == PlanBlockType.study ? '📚 Study' : '☕ Break',
+                        current.type == PlanBlockType.study ? 'Study' : 'Break',
                         style: Theme.of(context).textTheme.bodySmall?.copyWith(
                           color: AppTheme.textSecondary,
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        'Active',
+                        style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                          color: AppTheme.accentSecondary,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w500,
                         ),
                       ),
                       const SizedBox(height: AppTheme.xl),
@@ -437,7 +521,7 @@ class _MultiBlockTimerScreenState extends State<MultiBlockTimerScreen>
                           if (!isRunning && !isPaused)
                             _buildControlButton(
                               icon: Icons.play_arrow_rounded,
-                              label: 'Start',
+                              label: 'Start Session',
                               onTap: _startTimer,
                             )
                           else if (isRunning)
@@ -449,7 +533,7 @@ class _MultiBlockTimerScreenState extends State<MultiBlockTimerScreen>
                           else
                             _buildControlButton(
                               icon: Icons.play_arrow_rounded,
-                              label: 'Resume',
+                              label: 'Continue Plan',
                               onTap: _resumeTimer,
                             ),
                           const SizedBox(width: AppTheme.lg),
@@ -468,11 +552,16 @@ class _MultiBlockTimerScreenState extends State<MultiBlockTimerScreen>
                     if (_queueState!.upcomingBlocks.isNotEmpty) ...[
                       SectionHeader(
                         title: 'Upcoming Blocks',
-                        subtitle: '${_queueState!.upcomingBlocks.length} remaining',
+                        subtitle:
+                            '${_queueState!.upcomingBlocks.length} remaining',
                       ),
                       const SizedBox(height: AppTheme.lg),
                       ..._queueState!.upcomingBlocks.asMap().entries.map(
-                        (entry) => _buildQueueBlockTile(entry.key, entry.value),
+                        (entry) => _buildQueueBlockTile(
+                          entry.key,
+                          entry.value,
+                          statusLabel: entry.key == 0 ? 'Up Next' : 'Upcoming',
+                        ),
                       ),
                     ],
 
@@ -481,8 +570,12 @@ class _MultiBlockTimerScreenState extends State<MultiBlockTimerScreen>
                     // Completed blocks summary
                     if (_queueState!.completedBlockCount > 0)
                       ModernCard(
-                        backgroundColor: AppTheme.statusSuccess.withValues(alpha: 0.1),
-                        borderColor: AppTheme.statusSuccess.withValues(alpha: 0.3),
+                        backgroundColor: AppTheme.statusSuccess.withValues(
+                          alpha: 0.1,
+                        ),
+                        borderColor: AppTheme.statusSuccess.withValues(
+                          alpha: 0.3,
+                        ),
                         child: Row(
                           children: [
                             Icon(
@@ -496,16 +589,16 @@ class _MultiBlockTimerScreenState extends State<MultiBlockTimerScreen>
                               children: [
                                 Text(
                                   'Completed',
-                                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                                    color: AppTheme.textSecondary,
-                                  ),
+                                  style: Theme.of(context).textTheme.bodySmall
+                                      ?.copyWith(color: AppTheme.textSecondary),
                                 ),
                                 Text(
                                   '${_queueState!.completedBlockCount} / ${_queueState!.allBlocks.length} blocks',
-                                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                                    fontWeight: FontWeight.w700,
-                                    color: AppTheme.statusSuccess,
-                                  ),
+                                  style: Theme.of(context).textTheme.titleMedium
+                                      ?.copyWith(
+                                        fontWeight: FontWeight.w700,
+                                        color: AppTheme.statusSuccess,
+                                      ),
                                 ),
                               ],
                             ),
@@ -531,43 +624,31 @@ class _MultiBlockTimerScreenState extends State<MultiBlockTimerScreen>
   }
 
   Widget _buildTimerCircle(int remaining, int duration, double progress) {
-    return Container(
-      decoration: BoxDecoration(
-        shape: BoxShape.circle,
-        boxShadow: [
-          BoxShadow(
-            color: AppTheme.accentSecondary.withValues(alpha: 0.3),
-            blurRadius: 42,
-            spreadRadius: 10,
+    return CircularPercentIndicator(
+      radius: 120,
+      lineWidth: 12,
+      animation: false,
+      percent: progress.clamp(0.0, 1.0),
+      backgroundColor: AppTheme.bgCard,
+      progressColor: AppTheme.accentSecondary,
+      center: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            _formatTime(remaining),
+            style: Theme.of(context).textTheme.displayMedium?.copyWith(
+              fontWeight: FontWeight.w600,
+              color: AppTheme.textPrimary,
+            ),
+          ),
+          const SizedBox(height: AppTheme.md),
+          Text(
+            'of ${_formatTime(duration)}',
+            style: Theme.of(
+              context,
+            ).textTheme.bodySmall?.copyWith(color: AppTheme.textSecondary),
           ),
         ],
-      ),
-      child: CircularPercentIndicator(
-        radius: 120,
-        lineWidth: 12,
-        animation: false,
-        percent: progress.clamp(0.0, 1.0),
-        backgroundColor: AppTheme.bgCard,
-        progressColor: AppTheme.accentSecondary,
-        center: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              _formatTime(remaining),
-              style: Theme.of(context).textTheme.displayMedium?.copyWith(
-                fontWeight: FontWeight.w700,
-                color: AppTheme.textPrimary,
-              ),
-            ),
-            const SizedBox(height: AppTheme.md),
-            Text(
-              'of ${_formatTime(duration)}',
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                color: AppTheme.textSecondary,
-              ),
-            ),
-          ],
-        ),
       ),
     );
   }
@@ -590,18 +671,11 @@ class _MultiBlockTimerScreenState extends State<MultiBlockTimerScreen>
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(AppTheme.radiusLarge),
             color: AppTheme.bgCard,
-            border: Border.all(
-              color: AppTheme.bgCardLight,
-              width: 1,
-            ),
+            border: Border.all(color: AppTheme.bgCardLight, width: 1),
           ),
           child: Column(
             children: [
-              Icon(
-                icon,
-                color: AppTheme.accentSecondary,
-                size: 28,
-              ),
+              Icon(icon, color: AppTheme.accentSecondary, size: 28),
               const SizedBox(height: AppTheme.sm),
               Text(
                 label,
@@ -617,7 +691,11 @@ class _MultiBlockTimerScreenState extends State<MultiBlockTimerScreen>
     );
   }
 
-  Widget _buildQueueBlockTile(int index, ExecutingBlock block) {
+  Widget _buildQueueBlockTile(
+    int index,
+    ExecutingBlock block, {
+    required String statusLabel,
+  }) {
     return Padding(
       padding: const EdgeInsets.only(bottom: AppTheme.md),
       child: ModernCard(
@@ -675,6 +753,28 @@ class _MultiBlockTimerScreenState extends State<MultiBlockTimerScreen>
                           color: AppTheme.textTertiary,
                         ),
                       ),
+                      const SizedBox(width: AppTheme.lg),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 3,
+                        ),
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(999),
+                          color: AppTheme.bgCardLight,
+                        ),
+                        child: Text(
+                          statusLabel,
+                          style: Theme.of(context).textTheme.labelSmall
+                              ?.copyWith(
+                                color: statusLabel == 'Up Next'
+                                    ? AppTheme.accentSecondary
+                                    : AppTheme.textSecondary,
+                                fontSize: 12,
+                                fontWeight: FontWeight.w500,
+                              ),
+                        ),
+                      ),
                     ],
                   ),
                 ],
@@ -695,9 +795,9 @@ class _MultiBlockTimerScreenState extends State<MultiBlockTimerScreen>
               'Now: ${_currentStream.name}',
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                fontWeight: FontWeight.w600,
-              ),
+              style: Theme.of(
+                context,
+              ).textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600),
             ),
           ),
           const SizedBox(width: AppTheme.md),
@@ -735,13 +835,70 @@ class _MultiBlockTimerScreenState extends State<MultiBlockTimerScreen>
             borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
             color: AppTheme.bgCardLight,
           ),
-          child: Icon(
-            icon,
-            size: 20,
-            color: AppTheme.accentSecondary,
-          ),
+          child: Icon(icon, size: 20, color: AppTheme.accentSecondary),
         ),
       ),
+    );
+  }
+}
+
+class _SessionSummaryRow extends StatelessWidget {
+  const _SessionSummaryRow({
+    required this.title,
+    required this.subject,
+    required this.durationMinutes,
+    required this.label,
+    required this.labelColor,
+  });
+
+  final String title;
+  final String subject;
+  final int durationMinutes;
+  final String label;
+  final Color labelColor;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                title,
+                style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                  color: AppTheme.textSecondary,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                '$subject · $durationMinutes min',
+                style: Theme.of(
+                  context,
+                ).textTheme.bodyMedium?.copyWith(color: AppTheme.textPrimary),
+              ),
+            ],
+          ),
+        ),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(999),
+            color: AppTheme.bgCardLight,
+          ),
+          child: Text(
+            label,
+            style: Theme.of(context).textTheme.labelSmall?.copyWith(
+              color: labelColor,
+              fontSize: 12,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+        ),
+      ],
     );
   }
 }

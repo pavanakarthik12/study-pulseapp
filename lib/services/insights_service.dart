@@ -607,7 +607,22 @@ class InsightsService {
       );
     }
 
-    final validSessions = sessions.where(
+    final completedSessions = sessions
+        .where((session) => session.completed)
+        .toList();
+
+    if (completedSessions.isEmpty) {
+      return const InsightsSummary(
+        totalStudySeconds: 0,
+        averageFocusScore: 0,
+        bestSessionTimeLabel: 'No completed sessions yet',
+        bestFocusWindowLabel: 'Complete a session to unlock insights',
+        timeOfDayStats: <TimeOfDayStats>[],
+        totalSessions: 0,
+      );
+    }
+
+    final validSessions = completedSessions.where(
       (session) => session.durationSeconds > 0,
     );
     final totalStudySeconds = validSessions.fold<int>(
@@ -616,13 +631,13 @@ class InsightsService {
     );
 
     final avgFocus =
-        sessions.fold<double>(
+        completedSessions.fold<double>(
           0,
           (total, session) => total + session.focusScore,
         ) /
-        sessions.length;
+        completedSessions.length;
 
-    final bestSession = sessions.reduce((a, b) {
+    final bestSession = completedSessions.reduce((a, b) {
       return a.focusScore >= b.focusScore ? a : b;
     });
 
@@ -634,7 +649,7 @@ class InsightsService {
     final hourBuckets = <int, List<double>>{};
     final dayPartBuckets = <String, List<double>>{};
 
-    for (final session in sessions) {
+    for (final session in completedSessions) {
       final ts = session.timestamp;
       if (ts == null) {
         continue;
@@ -683,7 +698,7 @@ class InsightsService {
       bestSessionTimeLabel: bestSessionLabel,
       bestFocusWindowLabel: bestWindowLabel,
       timeOfDayStats: timeOfDayStats,
-      totalSessions: sessions.length,
+      totalSessions: completedSessions.length,
     );
   }
 
@@ -701,7 +716,7 @@ class InsightsService {
       dayBuckets[day] = _DailyAccumulator();
     }
 
-    for (final session in sessions) {
+    for (final session in sessions.where((item) => item.completed)) {
       final ts = session.timestamp;
       if (ts == null) {
         continue;

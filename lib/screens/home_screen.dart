@@ -265,11 +265,6 @@ class _HomeScreenState extends State<HomeScreen> {
                 const SizedBox(height: 18),
                 _HomeCard(
                   backgroundColor: _cardBlueTint,
-                  shadow: const BoxShadow(
-                    color: Color(0x1A4F7CFF),
-                    blurRadius: 16,
-                    offset: Offset(0, 6),
-                  ),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
@@ -568,13 +563,13 @@ class _PrimarySessionCard extends StatelessWidget {
     final hasUpcoming = upcomingSession != null;
 
     final title = hasCurrent
-        ? 'Resume ${currentSession!.subject}'
+        ? 'Continue Plan'
         : hasUpcoming
-        ? 'Start ${upcomingSession!.subject}'
-        : 'Start Smart Session';
+        ? 'Start Session'
+        : 'Start Session';
 
     final subtitle = hasCurrent
-        ? '${currentSession!.durationMinutes} min in progress'
+        ? '${currentSession!.subject} in progress'
         : hasUpcoming
         ? 'Next up: ${upcomingSession!.durationMinutes} min'
         : 'Your plan will be organized automatically';
@@ -588,13 +583,6 @@ class _PrimarySessionCard extends StatelessWidget {
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(24),
             color: _HomeScreenState._primaryBlue,
-            boxShadow: const [
-              BoxShadow(
-                color: Color(0x224F7CFF),
-                blurRadius: 20,
-                offset: Offset(0, 7),
-              ),
-            ],
           ),
           child: Padding(
             padding: const EdgeInsets.all(20),
@@ -715,14 +703,6 @@ class _HomeCard extends StatelessWidget {
       decoration: BoxDecoration(
         color: backgroundColor ?? _HomeScreenState._cardElevated,
         borderRadius: BorderRadius.circular(20),
-        boxShadow: [
-          shadow ??
-              const BoxShadow(
-                color: Color(0x16000000),
-                blurRadius: 8,
-                offset: Offset(0, 3),
-              ),
-        ],
       ),
       child: child,
     );

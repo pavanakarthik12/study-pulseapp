@@ -1,5 +1,4 @@
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:flutter_animate/flutter_animate.dart';
 import 'package:flutter/material.dart';
 
 import '../core/theme.dart';
@@ -47,9 +46,9 @@ class _LoginScreenState extends State<LoginScreen> {
       if (!mounted) {
         return;
       }
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(e.message ?? 'Login failed')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(e.message ?? 'Login failed')));
     } finally {
       if (mounted) {
         setState(() {
@@ -76,13 +75,10 @@ class _LoginScreenState extends State<LoginScreen> {
                       'Study Pulse',
                       textAlign: TextAlign.center,
                       style: Theme.of(context).textTheme.displaySmall?.copyWith(
-                        fontWeight: FontWeight.w700,
+                        fontWeight: FontWeight.w600,
                         letterSpacing: 0.5,
                       ),
-                    )
-                        .animate()
-                        .fade(duration: 450.ms)
-                        .slideY(begin: 0.12, end: 0, duration: 450.ms),
+                    ),
                     const SizedBox(height: AppTheme.md),
                     Text(
                       'Train your focus',
@@ -91,10 +87,7 @@ class _LoginScreenState extends State<LoginScreen> {
                         color: AppTheme.textSecondary,
                         fontWeight: FontWeight.w500,
                       ),
-                    )
-                        .animate(delay: 120.ms)
-                        .fade(duration: 450.ms)
-                        .slideY(begin: 0.12, end: 0, duration: 450.ms),
+                    ),
                     const SizedBox(height: AppTheme.xl),
                     ModernCard(
                       child: Form(
@@ -141,31 +134,28 @@ class _LoginScreenState extends State<LoginScreen> {
                               children: [
                                 Text(
                                   'Don\'t have an account? ',
-                                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                                    color: AppTheme.textSecondary,
-                                  ),
+                                  style: Theme.of(context).textTheme.bodyMedium
+                                      ?.copyWith(color: AppTheme.textSecondary),
                                 ),
                                 TertiaryButton(
                                   label: 'Sign up',
                                   onPressed: _isLoading
                                       ? () {}
                                       : () {
-                                    Navigator.of(context).push(
-                                      MaterialPageRoute(
-                                        builder: (_) => const SignupScreen(),
-                                      ),
-                                    );
-                                  },
+                                          Navigator.of(context).push(
+                                            MaterialPageRoute(
+                                              builder: (_) =>
+                                                  const SignupScreen(),
+                                            ),
+                                          );
+                                        },
                                 ),
                               ],
                             ),
                           ],
                         ),
                       ),
-                    )
-                        .animate(delay: 220.ms)
-                        .fade(duration: 500.ms)
-                        .slideY(begin: 0.08, end: 0, duration: 500.ms),
+                    ),
                   ],
                 ),
               ),

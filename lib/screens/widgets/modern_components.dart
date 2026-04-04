@@ -1,5 +1,3 @@
-import 'dart:ui';
-
 import 'package:flutter/material.dart';
 
 import '../../core/theme.dart';
@@ -8,7 +6,7 @@ import '../../core/theme.dart';
 // BACKGROUND & CONTAINERS
 // ============================================================================
 
-/// Premium glass-morphism card with blur effect
+/// Clean card container.
 class ModernCard extends StatelessWidget {
   const ModernCard({
     super.key,
@@ -55,7 +53,7 @@ class ModernCard extends StatelessWidget {
   }
 }
 
-/// Glassmorphism card with backdrop blur
+/// Compatibility wrapper that now renders as a regular card.
 class GlassCard extends StatelessWidget {
   const GlassCard({
     super.key,
@@ -70,44 +68,19 @@ class GlassCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(AppTheme.radiusLarge),
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: blur, sigmaY: blur),
-        child: Container(
-          padding: EdgeInsets.all(padding),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(AppTheme.radiusLarge),
-            color: AppTheme.bgCard.withValues(alpha: 0.7),
-            border: Border.all(
-              color: AppTheme.bgCardLight.withValues(alpha: 0.8),
-              width: 1,
-            ),
-          ),
-          child: child,
-        ),
-      ),
-    );
+    return ModernCard(padding: padding, child: child);
   }
 }
 
-/// Gradient background container
+/// Solid background container.
 class GradientBackground extends StatelessWidget {
-  const GradientBackground({
-    super.key,
-    required this.child,
-  });
+  const GradientBackground({super.key, required this.child});
 
   final Widget child;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      decoration: const BoxDecoration(
-        gradient: AppTheme.gradientBackground,
-      ),
-      child: child,
-    );
+    return ColoredBox(color: AppTheme.bgDeepDark, child: child);
   }
 }
 
@@ -115,7 +88,7 @@ class GradientBackground extends StatelessWidget {
 // BUTTONS
 // ============================================================================
 
-/// Primary gradient button with smooth styling
+/// Primary solid button.
 class PrimaryButton extends StatelessWidget {
   const PrimaryButton({
     super.key,
@@ -136,43 +109,34 @@ class PrimaryButton extends StatelessWidget {
   Widget build(BuildContext context) {
     return SizedBox(
       width: fullWidth ? double.infinity : null,
-      child: Container(
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(AppTheme.radiusLarge),
-          gradient: AppTheme.gradientPrimary,
-        ),
-        child: ElevatedButton.icon(
-          onPressed: isLoading ? null : onPressed,
-          icon: isLoading
-              ? SizedBox(
-                  height: 18,
-                  width: 18,
-                  child: CircularProgressIndicator(
-                    strokeWidth: 2,
-                    valueColor: AlwaysStoppedAnimation(
-                      AppTheme.bgDeepDark.withValues(alpha: 0.8),
-                    ),
-                  ),
-                )
-              : (icon != null ? Icon(icon) : const SizedBox.shrink()),
-          label: isLoading
-              ? const SizedBox.shrink()
-              : Text(
-                  label,
-                  style: const TextStyle(
-                    color: AppTheme.bgDeepDark,
-                    fontWeight: FontWeight.w600,
-                    fontSize: 16,
-                    letterSpacing: 0.2,
+      child: ElevatedButton.icon(
+        onPressed: isLoading ? null : onPressed,
+        icon: isLoading
+            ? SizedBox(
+                height: 18,
+                width: 18,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  valueColor: AlwaysStoppedAnimation(
+                    AppTheme.bgDeepDark.withValues(alpha: 0.8),
                   ),
                 ),
-          style: ElevatedButton.styleFrom(
-            minimumSize: const Size.fromHeight(48),
-            backgroundColor: Colors.transparent,
-            shadowColor: Colors.transparent,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(AppTheme.radiusLarge),
-            ),
+              )
+            : (icon != null ? Icon(icon) : const SizedBox.shrink()),
+        label: isLoading
+            ? const SizedBox.shrink()
+            : Text(
+                label,
+                style: const TextStyle(
+                  color: AppTheme.bgDeepDark,
+                  fontWeight: FontWeight.w500,
+                  fontSize: 16,
+                ),
+              ),
+        style: ElevatedButton.styleFrom(
+          minimumSize: const Size.fromHeight(48),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(AppTheme.radiusLarge),
           ),
         ),
       ),
@@ -212,10 +176,7 @@ class SecondaryButton extends StatelessWidget {
         ),
         style: OutlinedButton.styleFrom(
           minimumSize: const Size.fromHeight(48),
-          side: const BorderSide(
-            color: AppTheme.accentSecondary,
-            width: 1.5,
-          ),
+          side: const BorderSide(color: AppTheme.accentSecondary, width: 1.5),
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(AppTheme.radiusLarge),
           ),
@@ -340,11 +301,7 @@ class MetricCard extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           if (icon != null) ...[
-            Icon(
-              icon,
-              color: AppTheme.accentSecondary,
-              size: 24,
-            ),
+            Icon(icon, color: AppTheme.accentSecondary, size: 24),
             const SizedBox(height: AppTheme.md),
           ],
           Text(
@@ -357,9 +314,9 @@ class MetricCard extends StatelessWidget {
           const SizedBox(height: AppTheme.xs),
           Text(
             label,
-            style: Theme.of(context).textTheme.bodySmall?.copyWith(
-              color: AppTheme.textSecondary,
-            ),
+            style: Theme.of(
+              context,
+            ).textTheme.bodySmall?.copyWith(color: AppTheme.textSecondary),
           ),
         ],
       ),
@@ -416,10 +373,7 @@ class SectionHeader extends StatelessWidget {
               ],
             ),
             if (actionLabel != null && onAction != null)
-              TertiaryButton(
-                label: actionLabel!,
-                onPressed: onAction!,
-              ),
+              TertiaryButton(label: actionLabel!, onPressed: onAction!),
           ],
         ),
       ],
@@ -461,11 +415,7 @@ class ModernBadge extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           if (icon != null) ...[
-            Icon(
-              icon,
-              color: textColor,
-              size: 14,
-            ),
+            Icon(icon, color: textColor, size: 14),
             const SizedBox(width: AppTheme.xs),
           ],
           Text(
@@ -515,15 +465,15 @@ class ModernProgressBar extends StatelessWidget {
             children: [
               Text(
                 label!,
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: AppTheme.textSecondary,
-                ),
+                style: Theme.of(
+                  context,
+                ).textTheme.bodySmall?.copyWith(color: AppTheme.textSecondary),
               ),
               Text(
                 '${(progress * 100).toStringAsFixed(0)}%',
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: AppTheme.textTertiary,
-                ),
+                style: Theme.of(
+                  context,
+                ).textTheme.bodySmall?.copyWith(color: AppTheme.textTertiary),
               ),
             ],
           ),
@@ -572,11 +522,7 @@ class EmptyState extends StatelessWidget {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(
-              icon,
-              size: 56,
-              color: AppTheme.textSecondary,
-            ),
+            Icon(icon, size: 56, color: AppTheme.textSecondary),
             const SizedBox(height: AppTheme.xl),
             Text(
               title,
@@ -589,17 +535,14 @@ class EmptyState extends StatelessWidget {
             const SizedBox(height: AppTheme.md),
             Text(
               subtitle,
-              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                color: AppTheme.textSecondary,
-              ),
+              style: Theme.of(
+                context,
+              ).textTheme.bodyMedium?.copyWith(color: AppTheme.textSecondary),
               textAlign: TextAlign.center,
             ),
             if (action != null && actionLabel != null) ...[
               const SizedBox(height: AppTheme.xl),
-              PrimaryButton(
-                label: actionLabel!,
-                onPressed: action!,
-              ),
+              PrimaryButton(label: actionLabel!, onPressed: action!),
             ],
           ],
         ),

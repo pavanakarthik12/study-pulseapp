@@ -335,6 +335,50 @@ class TimerService {
     _moveToNextBlock();
   }
 
+  /// End plan early by skipping current and remaining blocks.
+  Future<void> endPlanEarly() async {
+    if (_queueState == null) return;
+
+    _executionTimer?.cancel();
+    _executionTimer = null;
+    _timerStartTime = null;
+    _pausedElapsed = 0;
+
+    final blocks = _queueState!.allBlocks;
+    var completedCount = 0;
+    var skippedCount = 0;
+
+    for (var i = 0; i < blocks.length; i++) {
+      final block = blocks[i];
+      if (i >= _queueState!.currentBlockIndex &&
+          block.state != TimerBlockState.completed &&
+          block.state != TimerBlockState.skipped) {
+        block.state = TimerBlockState.skipped;
+      }
+
+      if (block.state == TimerBlockState.completed) {
+        completedCount++;
+      } else if (block.state == TimerBlockState.skipped) {
+        skippedCount++;
+      }
+    }
+
+    _queueState = TimerQueueState(
+      planId: _queueState!.planId,
+      userId: _queueState!.userId,
+      allBlocks: blocks,
+      currentBlockIndex: blocks.length,
+      startedAt: _queueState!.startedAt,
+      pausedAt: DateTime.now(),
+      completedBlockCount: completedCount,
+      skippedBlockCount: skippedCount,
+    );
+
+    _normalizeSingleActiveBlock();
+    _emitQueueState();
+    _notifyPlanComplete();
+  }
+
   /// Stop timer completely
   void stopTimer() {
     _executionTimer?.cancel();

@@ -1,23 +1,22 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
-/// Modern Design System for Study Pulse
-/// Dark theme with soft purple and cyan accents
+/// Clean design system for Study Pulse.
 class AppTheme {
   // ============================================================================
   // COLORS
   // ============================================================================
 
   // Backgrounds
-  static const Color bgDeepDark = Color(0xFF0D0F14);
-  static const Color bgCard = Color(0xFF1A1D24);
-  static const Color bgCardLight = Color(0xFF232830);
+  static const Color bgDeepDark = Color(0xFF0F1218);
+  static const Color bgCard = Color(0xFF1A1F2B);
+  static const Color bgCardLight = Color(0xFF242A39);
 
   // Accents
-  static const Color accentPrimary = Color(0xFFB8A5FF); // Soft purple
-  static const Color accentPrimaryDark = Color(0xFF9D7FF0);
-  static const Color accentSecondary = Color(0xFF5FD3F3); // Cyan
-  static const Color accentSecondaryDark = Color(0xFF2FC4E8);
+  static const Color accentPrimary = Color(0xFF4F7CFF);
+  static const Color accentPrimaryDark = Color(0xFF4169D6);
+  static const Color accentSecondary = Color(0xFF4F7CFF);
+  static const Color accentSecondaryDark = Color(0xFF4169D6);
 
   // Text
   static const Color textPrimary = Color(0xFFFAFAFA);
@@ -30,15 +29,15 @@ class AppTheme {
   static const Color statusError = Color(0xFFFF8A80);
   static const Color statusInfo = Color(0xFF5FD3F3);
 
-  // Gradients
+  // Legacy gradient constants retained for compatibility, but rendered flat.
   static const LinearGradient gradientPrimary = LinearGradient(
-    colors: [accentPrimary, accentPrimaryDark],
+    colors: [accentPrimary, accentPrimary],
     begin: Alignment.topLeft,
     end: Alignment.bottomRight,
   );
 
   static const LinearGradient gradientSecondary = LinearGradient(
-    colors: [accentSecondary, accentSecondaryDark],
+    colors: [accentSecondary, accentSecondary],
     begin: Alignment.topLeft,
     end: Alignment.bottomRight,
   );
@@ -46,11 +45,7 @@ class AppTheme {
   static const LinearGradient gradientBackground = LinearGradient(
     begin: Alignment.topLeft,
     end: Alignment.bottomRight,
-    colors: [
-      Color(0xFF0D0F14),
-      Color(0xFF131820),
-      Color(0xFF1A1D24),
-    ],
+    colors: [bgDeepDark, bgDeepDark, bgDeepDark],
   );
 
   // ============================================================================
@@ -92,19 +87,19 @@ class AppTheme {
         displayLarge: baseTextTheme.displayLarge?.copyWith(
           color: textPrimary,
           fontSize: 36,
-          fontWeight: FontWeight.w700,
+          fontWeight: FontWeight.w600,
           letterSpacing: -0.5,
         ),
         displayMedium: baseTextTheme.displayMedium?.copyWith(
           color: textPrimary,
           fontSize: 32,
-          fontWeight: FontWeight.w700,
+          fontWeight: FontWeight.w600,
           letterSpacing: -0.3,
         ),
         displaySmall: baseTextTheme.displaySmall?.copyWith(
           color: textPrimary,
           fontSize: 28,
-          fontWeight: FontWeight.w700,
+          fontWeight: FontWeight.w600,
           letterSpacing: -0.2,
         ),
 
@@ -112,19 +107,19 @@ class AppTheme {
         headlineLarge: baseTextTheme.headlineLarge?.copyWith(
           color: textPrimary,
           fontSize: 28,
-          fontWeight: FontWeight.w700,
+          fontWeight: FontWeight.w600,
           letterSpacing: 0,
         ),
         headlineMedium: baseTextTheme.headlineMedium?.copyWith(
           color: textPrimary,
           fontSize: 24,
-          fontWeight: FontWeight.w700,
+          fontWeight: FontWeight.w600,
           letterSpacing: 0,
         ),
         headlineSmall: baseTextTheme.headlineSmall?.copyWith(
           color: textPrimary,
           fontSize: 20,
-          fontWeight: FontWeight.w700,
+          fontWeight: FontWeight.w600,
           letterSpacing: 0,
         ),
 
@@ -138,13 +133,13 @@ class AppTheme {
         titleMedium: baseTextTheme.titleMedium?.copyWith(
           color: textPrimary,
           fontSize: 16,
-          fontWeight: FontWeight.w600,
+          fontWeight: FontWeight.w500,
           letterSpacing: 0,
         ),
         titleSmall: baseTextTheme.titleSmall?.copyWith(
           color: textSecondary,
           fontSize: 14,
-          fontWeight: FontWeight.w600,
+          fontWeight: FontWeight.w500,
           letterSpacing: 0.1,
         ),
 
@@ -212,16 +207,13 @@ class AppTheme {
         style: ElevatedButton.styleFrom(
           backgroundColor: accentPrimary,
           foregroundColor: bgDeepDark,
-          padding: const EdgeInsets.symmetric(
-            horizontal: lg,
-            vertical: lg,
-          ),
+          padding: const EdgeInsets.symmetric(horizontal: lg, vertical: lg),
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(radiusLarge),
           ),
           elevation: 0,
           textStyle: baseTextTheme.labelLarge?.copyWith(
-            fontWeight: FontWeight.w600,
+            fontWeight: FontWeight.w500,
             fontSize: 16,
           ),
         ),
@@ -230,19 +222,13 @@ class AppTheme {
       outlinedButtonTheme: OutlinedButtonThemeData(
         style: OutlinedButton.styleFrom(
           foregroundColor: accentSecondary,
-          padding: const EdgeInsets.symmetric(
-            horizontal: lg,
-            vertical: lg,
-          ),
+          padding: const EdgeInsets.symmetric(horizontal: lg, vertical: lg),
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(radiusLarge),
           ),
-          side: const BorderSide(
-            color: accentSecondary,
-            width: 1.5,
-          ),
+          side: const BorderSide(color: accentSecondary, width: 1.5),
           textStyle: baseTextTheme.labelLarge?.copyWith(
-            fontWeight: FontWeight.w600,
+            fontWeight: FontWeight.w500,
             fontSize: 16,
           ),
         ),
@@ -251,10 +237,7 @@ class AppTheme {
       textButtonTheme: TextButtonThemeData(
         style: TextButton.styleFrom(
           foregroundColor: accentSecondary,
-          padding: const EdgeInsets.symmetric(
-            horizontal: md,
-            vertical: md,
-          ),
+          padding: const EdgeInsets.symmetric(horizontal: md, vertical: md),
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(radiusMedium),
           ),
@@ -274,10 +257,7 @@ class AppTheme {
         ),
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(radiusLarge),
-          borderSide: const BorderSide(
-            color: bgCardLight,
-            width: 1,
-          ),
+          borderSide: const BorderSide(color: bgCardLight, width: 1),
         ),
         enabledBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(radiusLarge),
@@ -288,24 +268,15 @@ class AppTheme {
         ),
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(radiusLarge),
-          borderSide: const BorderSide(
-            color: accentSecondary,
-            width: 2,
-          ),
+          borderSide: const BorderSide(color: accentSecondary, width: 2),
         ),
         errorBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(radiusLarge),
-          borderSide: const BorderSide(
-            color: statusError,
-            width: 1,
-          ),
+          borderSide: const BorderSide(color: statusError, width: 1),
         ),
         focusedErrorBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(radiusLarge),
-          borderSide: const BorderSide(
-            color: statusError,
-            width: 2,
-          ),
+          borderSide: const BorderSide(color: statusError, width: 2),
         ),
         hintStyle: TextStyle(
           color: textTertiary,
@@ -330,10 +301,7 @@ class AppTheme {
         elevation: 0,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(radiusLarge),
-          side: BorderSide(
-            color: bgCardLight,
-            width: 1,
-          ),
+          side: BorderSide(color: bgCardLight, width: 1),
         ),
       ),
 
@@ -344,12 +312,9 @@ class AppTheme {
         centerTitle: true,
         titleTextStyle: baseTextTheme.titleLarge?.copyWith(
           color: textPrimary,
-          fontWeight: FontWeight.w700,
+          fontWeight: FontWeight.w600,
         ),
-        iconTheme: const IconThemeData(
-          color: accentSecondary,
-          size: 24,
-        ),
+        iconTheme: const IconThemeData(color: accentSecondary, size: 24),
       ),
 
       // ====== SNACKBAR ======
