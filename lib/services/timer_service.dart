@@ -361,8 +361,7 @@ class TimerService {
 
     for (var i = 0; i < blocks.length; i++) {
       final block = blocks[i];
-      if (i >= _queueState!.currentBlockIndex &&
-          block.state != TimerBlockState.completed &&
+      if (block.state != TimerBlockState.completed &&
           block.state != TimerBlockState.skipped) {
         block.state = TimerBlockState.skipped;
       }
@@ -494,6 +493,7 @@ class TimerService {
   void _notifyPlanComplete() {
     _executionTimer?.cancel();
     if (_queueState != null) {
+      final endedAt = DateTime.now();
       unawaited(saveSessionResults(_queueState!.userId));
       unawaited(
         _insightsService.syncPlanSchedule(
@@ -501,6 +501,8 @@ class TimerService {
           blocks: _toTrackedBlocks(_queueState!.allBlocks),
           currentBlockIndex: _queueState!.allBlocks.length,
           planStatus: 'completed',
+          isActive: false,
+          endedAt: endedAt,
         ),
       );
       unawaited(
@@ -706,51 +708,51 @@ class TimerService {
 
     try {
       final now = DateTime.now();
-      final totalDuration = now.difference(_queueState!.startedAt);
-
       final studyBlocks = _queueState!.allBlocks
-          .where((block) => block.type == PlanBlockType.study)
+          .asMap()
+          .entries
+          .where((entry) => entry.value.type == PlanBlockType.study)
           .toList();
-      final totalStudySeconds = studyBlocks.fold<int>(
-        0,
-        (total, block) => total + block.durationSeconds,
-      );
-      final completedStudySeconds = studyBlocks.fold<int>(
-        0,
-        (total, block) =>
-            total + block.elapsedSeconds.clamp(0, block.durationSeconds),
-      );
 
-      final focusScore = totalStudySeconds <= 0
-          ? 0.0
-          : ((completedStudySeconds / totalStudySeconds) * 100)
-                .clamp(0, 100)
-                .toDouble();
+      for (final entry in studyBlocks) {
+        final index = entry.key;
+        final block = entry.value;
+        final clampedElapsed = block.elapsedSeconds.clamp(
+          0,
+          block.durationSeconds,
+        );
+        final status = block.state == TimerBlockState.completed
+            ? 'completed'
+            : (block.state == TimerBlockState.skipped ? 'skipped' : 'pending');
 
-      final subject = studyBlocks.isEmpty
-          ? 'Smart Session'
-          : studyBlocks
-                .map((block) => block.subject.trim())
-                .firstWhere(
-                  (name) => name.isNotEmpty,
-                  orElse: () => 'Smart Session',
-                );
+        // Persist finished study blocks for history; pending blocks are not history yet.
+        if (status == 'pending') {
+          continue;
+        }
 
-      final isCompleted =
-          _queueState!.completedBlockCount >= _queueState!.allBlocks.length &&
-          _queueState!.skippedBlockCount == 0;
+        final focusScore = block.durationSeconds <= 0
+            ? 0.0
+            : ((clampedElapsed / block.durationSeconds) * 100)
+                  .clamp(0, 100)
+                  .toDouble();
 
-      await _insightsService.saveSessionRecord(
-        SessionRecordInput(
-          userId: userId,
-          sessionDurationSeconds: totalDuration.inSeconds,
-          focusScore: focusScore,
-          timestamp: now,
-          subject: subject,
-          completed: isCompleted,
-          planId: _queueState!.planId,
-        ),
-      );
+        await _insightsService.saveSessionRecord(
+          SessionRecordInput(
+            userId: userId,
+            sessionDurationSeconds: block.durationSeconds,
+            focusScore: focusScore,
+            timestamp: now.add(Duration(milliseconds: index)),
+            subject: block.subject.trim().isEmpty
+                ? 'Smart Session'
+                : block.subject.trim(),
+            completed: status == 'completed',
+            status: status,
+            planId: _queueState!.planId,
+            blockIndex: index,
+            blockType: block.type.name,
+          ),
+        );
+      }
 
       _hasSavedResultsForCurrentPlan = true;
     } catch (e) {

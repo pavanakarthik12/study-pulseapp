@@ -377,7 +377,7 @@ class _MultiBlockTimerScreenState extends State<MultiBlockTimerScreen>
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Plan ended early. Remaining blocks skipped.'),
+          content: Text('Plan completed. Remaining blocks were skipped.'),
         ),
       );
     }

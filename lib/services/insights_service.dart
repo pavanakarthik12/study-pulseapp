@@ -10,6 +10,7 @@ class FocusSessionRecord {
     required this.timestamp,
     required this.userId,
     required this.completed,
+    required this.status,
     this.subject,
     this.distractionSeconds,
   });
@@ -21,6 +22,7 @@ class FocusSessionRecord {
   final String? subject;
   final int? distractionSeconds;
   final bool completed;
+  final String status;
 
   factory FocusSessionRecord.fromMap(Map<String, dynamic> data) {
     final rawTimestamp = data['timestamp'] ?? data['session_started_at'];
@@ -42,7 +44,10 @@ class FocusSessionRecord {
       userId: (data['user_id'] as String?)?.trim(),
       subject: (data['subject'] as String?)?.trim(),
       distractionSeconds: (data['distraction_time'] as num?)?.toInt(),
-      completed: (data['completed'] as bool?) ?? true,
+      completed: (data['completed'] as bool?) ??
+          ((data['status'] as String?)?.toLowerCase() == 'completed'),
+      status: ((data['status'] as String?)?.toLowerCase() ??
+              ((data['completed'] as bool?) == true ? 'completed' : 'pending')),
     );
   }
 }
@@ -313,6 +318,9 @@ class SessionRecordInput {
     required this.subject,
     required this.completed,
     this.planId,
+    this.status,
+    this.blockIndex,
+    this.blockType,
   });
 
   final String userId;
@@ -322,6 +330,9 @@ class SessionRecordInput {
   final String subject;
   final bool completed;
   final String? planId;
+  final String? status;
+  final int? blockIndex;
+  final String? blockType;
 }
 
 class SessionPreview {
@@ -382,6 +393,11 @@ class InsightsService {
   }
 
   Future<void> saveSessionRecord(SessionRecordInput input) async {
+    final resolvedStatus =
+        (input.status?.trim().toLowerCase().isNotEmpty ?? false)
+        ? input.status!.trim().toLowerCase()
+        : (input.completed ? 'completed' : 'skipped');
+
     final payload = <String, dynamic>{
       'user_id': input.userId,
       'session_duration': input.sessionDurationSeconds,
@@ -389,7 +405,10 @@ class InsightsService {
       'timestamp': Timestamp.fromDate(input.timestamp),
       'subject': input.subject,
       'completed': input.completed,
+      'status': resolvedStatus,
       'plan_id': input.planId,
+      if (input.blockIndex != null) 'block_index': input.blockIndex,
+      if (input.blockType != null) 'block_type': input.blockType,
       // Compatibility mirrors for older readers.
       'total_duration_seconds': input.sessionDurationSeconds,
       'session_started_at': Timestamp.fromDate(input.timestamp),
@@ -884,6 +903,7 @@ class InsightsService {
       'created_at': FieldValue.serverTimestamp(),
       'updated_at': FieldValue.serverTimestamp(),
       'plan_status': 'active',
+      'is_active': true,
       'current_block_index': 0,
       'blocks': trackedBlocks.map((block) => block.toMap()).toList(),
     };
@@ -939,12 +959,16 @@ class InsightsService {
     required List<TrackedPlanBlock> blocks,
     int? currentBlockIndex,
     String? planStatus,
+    bool? isActive,
+    DateTime? endedAt,
   }) async {
     await _plansCollection.doc(planId).set({
       'updated_at': FieldValue.serverTimestamp(),
       'blocks': blocks.map((block) => block.toMap()).toList(),
       if (currentBlockIndex != null) 'current_block_index': currentBlockIndex,
       if (planStatus != null) 'plan_status': planStatus,
+      if (isActive != null) 'is_active': isActive,
+      if (endedAt != null) 'end_timestamp': Timestamp.fromDate(endedAt),
     }, SetOptions(merge: true));
   }
 
