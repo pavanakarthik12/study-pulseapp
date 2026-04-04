@@ -158,3 +158,15 @@ Contributions are welcome! Please follow these guidelines:
 - The current analytics layer is deterministic and data-driven (ML-style simulation).
 - The architecture is ready to swap in a real ML model later (for prediction and planning recommendations).
 - Design system is locked to ensure consistency across all screens (see "UI/UX Design System" section).
+
+app screens:
+<img width="344" height="769" alt="image" src="https://github.com/user-attachments/assets/5bcc9b18-abcd-4db0-91f3-f7dfed8c6706" />
+<img width="350" height="751" alt="image" src="https://github.com/user-attachments/assets/2d2608c5-ed92-4f9e-9429-2492342ae471" />
+<img width="347" height="749" alt="image" src="https://github.com/user-attachments/assets/7892aa32-02a8-4e3d-96f3-dea18bd383c1" />
+<img width="335" height="723" alt="image" src="https://github.com/user-attachments/assets/7b6cce33-044d-4843-b504-b6171436538c" />
+<img width="338" height="731" alt="image" src="https://github.com/user-attachments/assets/ea9446a4-1ebb-4144-8b79-06702b1485ae" />
+
+
+
+
+
