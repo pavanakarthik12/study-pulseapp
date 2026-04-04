@@ -24,12 +24,13 @@ class _HomeScreenState extends State<HomeScreen> {
 
   final AuthService _authService = AuthService();
   final InsightsService _insightsService = InsightsService();
-  late final Future<_HomeStats> _homeStatsFuture = _loadHomeStats();
+  late Future<_HomeStats> _homeStatsFuture;
   Stream<SessionFlowState>? _sessionFlowStream;
 
   @override
   void initState() {
     super.initState();
+    _homeStatsFuture = _loadHomeStats();
     final user = _authService.currentUser;
     if (user != null) {
       _sessionFlowStream = _insightsService.watchSessionFlowState(
@@ -203,12 +204,18 @@ class _HomeScreenState extends State<HomeScreen> {
     }
 
     if (plan != null && plan.blocks.isNotEmpty) {
-      Navigator.of(contextRef).push(
+      final planEnded = await Navigator.of(contextRef).push<bool>(
         MaterialPageRoute(
           builder: (_) =>
               MultiBlockTimerScreen(plan: plan!, autostartBlocks: true),
         ),
       );
+
+      if (mounted && planEnded == true) {
+        setState(() {
+          _homeStatsFuture = _loadHomeStats();
+        });
+      }
       return;
     }
 

@@ -40,6 +40,15 @@ class _InsightsDashboardScreenState extends State<InsightsDashboardScreen> {
 
   bool _isLocalPlanId(String planId) => planId.startsWith('local_');
 
+  bool _hasActionableStudyBlocks(List<TrackedPlanBlock> blocks) {
+    return blocks.any(
+      (block) =>
+          block.type == PlanBlockType.study &&
+          (block.status == PlanBlockStatus.pending ||
+              block.status == PlanBlockStatus.active),
+    );
+  }
+
   @override
   void initState() {
     super.initState();
@@ -81,6 +90,14 @@ class _InsightsDashboardScreenState extends State<InsightsDashboardScreen> {
         return;
       }
 
+      if (!_hasActionableStudyBlocks(latestPlan.blocks)) {
+        setState(() {
+          _activePlanId = null;
+          _trackedBlocks = const <TrackedPlanBlock>[];
+        });
+        return;
+      }
+
       setState(() {
         _activePlanId = latestPlan.id;
         _trackedBlocks = latestPlan.blocks;
@@ -96,6 +113,14 @@ class _InsightsDashboardScreenState extends State<InsightsDashboardScreen> {
     _planSubscription?.cancel();
     _planSubscription = _insightsService.watchStudyPlan(planId).listen((plan) {
       if (!mounted || plan == null) {
+        return;
+      }
+
+      if (!_hasActionableStudyBlocks(plan.blocks)) {
+        setState(() {
+          _activePlanId = null;
+          _trackedBlocks = const <TrackedPlanBlock>[];
+        });
         return;
       }
 
@@ -137,10 +162,9 @@ class _InsightsDashboardScreenState extends State<InsightsDashboardScreen> {
 
       final sessions = await _insightsService.fetchRecentSessions(
         userId: userId,
+        completedOnly: true,
       );
-      final completedSessions = sessions
-          .where((session) => session.completed)
-          .toList();
+      final completedSessions = sessions;
 
       final summary = _insightsService.buildInsightsSummary(sessions);
       final trend = _insightsService.buildRecentDailyTrend(sessions);
@@ -255,16 +279,16 @@ class _InsightsDashboardScreenState extends State<InsightsDashboardScreen> {
         .toList();
 
     final localPlanId = 'local_${DateTime.now().millisecondsSinceEpoch}';
+    setState(() {
+      _activePlanId = localPlanId;
+      _trackedBlocks = localTrackedBlocks;
+    });
 
     final userId = FirebaseAuth.instance.currentUser?.uid;
     if (userId == null || userId.isEmpty) {
       if (!mounted) {
         return;
       }
-      setState(() {
-        _activePlanId = localPlanId;
-        _trackedBlocks = localTrackedBlocks;
-      });
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text(
@@ -294,16 +318,15 @@ class _InsightsDashboardScreenState extends State<InsightsDashboardScreen> {
         _trackedBlocks = trackedPlan.blocks;
       });
       _subscribeToPlan(trackedPlan.id);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Plan created and synced.')),
+      );
     } catch (e) {
       debugPrint('Could not sync plan to Firestore: $e');
       if (!mounted) {
         return;
       }
       _planSubscription?.cancel();
-      setState(() {
-        _activePlanId = localPlanId;
-        _trackedBlocks = localTrackedBlocks;
-      });
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text(
@@ -390,7 +413,7 @@ class _InsightsDashboardScreenState extends State<InsightsDashboardScreen> {
     }
   }
 
-  void _startStudySession() {
+  Future<void> _startStudySession() async {
     if (_activePlanId == null || _trackedBlocks.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('No study plan generated yet.')),
@@ -404,12 +427,24 @@ class _InsightsDashboardScreenState extends State<InsightsDashboardScreen> {
       blocks: _trackedBlocks,
     );
 
-    Navigator.of(context).push(
+    final planEnded = await Navigator.of(context).push<bool>(
       MaterialPageRoute(
         builder: (_) =>
             MultiBlockTimerScreen(plan: plan, autostartBlocks: false),
       ),
     );
+
+    if (!mounted) {
+      return;
+    }
+
+    if (planEnded == true) {
+      setState(() {
+        _activePlanId = null;
+        _trackedBlocks = const <TrackedPlanBlock>[];
+        _insightsFuture = _loadInsights();
+      });
+    }
   }
 
   String _statusLabel(PlanBlockStatus status, {bool isNextUpcoming = false}) {

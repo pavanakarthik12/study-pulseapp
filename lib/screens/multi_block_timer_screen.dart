@@ -267,7 +267,7 @@ class _MultiBlockTimerScreenState extends State<MultiBlockTimerScreen>
     }
 
     if (mounted) {
-      Navigator.of(context).pop();
+      Navigator.of(context).pop(true);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -364,7 +364,7 @@ class _MultiBlockTimerScreenState extends State<MultiBlockTimerScreen>
       return;
     }
 
-    Navigator.of(context).pop();
+    Navigator.of(context).pop(true);
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(

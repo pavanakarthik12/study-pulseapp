@@ -402,6 +402,7 @@ class InsightsService {
   Future<List<FocusSessionRecord>> fetchRecentSessions({
     int limit = 160,
     String? userId,
+    bool completedOnly = false,
   }) async {
     Query<Map<String, dynamic>> query = _sessionsCollection
         .orderBy('timestamp', descending: true)
@@ -413,9 +414,15 @@ class InsightsService {
 
     final snapshot = await query.get();
 
-    return snapshot.docs
+    final sessions = snapshot.docs
         .map((doc) => FocusSessionRecord.fromMap(doc.data()))
         .toList();
+
+    if (completedOnly) {
+      return sessions.where((session) => session.completed).toList();
+    }
+
+    return sessions;
   }
 
   Stream<List<FocusSessionRecord>> watchRecentSessions({
@@ -453,36 +460,50 @@ class InsightsService {
       SessionPreview? current;
       SessionPreview? upcoming;
 
-      for (final doc in queueSnapshot.docs) {
+      final queueDocs = [...queueSnapshot.docs]
+        ..sort((a, b) {
+          final aTs = a.data()['updated_at'];
+          final bTs = b.data()['updated_at'];
+          final aMs = aTs is Timestamp ? aTs.millisecondsSinceEpoch : 0;
+          final bMs = bTs is Timestamp ? bTs.millisecondsSinceEpoch : 0;
+          return bMs.compareTo(aMs);
+        });
+
+      for (final doc in queueDocs) {
         final data = doc.data();
+        final planStatus = (data['plan_status'] as String?)?.toLowerCase();
+        if (planStatus == 'completed') {
+          continue;
+        }
+
         final blocks = (data['all_blocks'] as List?) ?? const [];
         final currentIndex =
             (data['current_block_index'] as num?)?.toInt() ?? 0;
         final planId = data['plan_id'] as String?;
 
-        if (blocks.isEmpty ||
-            currentIndex < 0 ||
-            currentIndex >= blocks.length) {
+        if (blocks.isEmpty || currentIndex < 0 || currentIndex > blocks.length) {
           continue;
         }
 
-        final currentBlock = blocks[currentIndex] as Map<String, dynamic>;
-        final state = (currentBlock['state'] as String?) ?? 'pending';
-        final subject = (currentBlock['subject'] as String?)?.trim();
-        final durationSeconds =
-            (currentBlock['duration_seconds'] as num?)?.toInt() ?? 0;
+        if (currentIndex < blocks.length) {
+          final currentBlock = blocks[currentIndex] as Map<String, dynamic>;
+          final state = (currentBlock['state'] as String?) ?? 'pending';
+          final subject = (currentBlock['subject'] as String?)?.trim();
+          final durationSeconds =
+              (currentBlock['duration_seconds'] as num?)?.toInt() ?? 0;
 
-        if (state == 'running' || state == 'paused') {
-          current = SessionPreview(
-            subject: (subject == null || subject.isEmpty)
-                ? 'Smart Session'
-                : subject,
-            durationMinutes: durationSeconds ~/ 60,
-            planId: planId,
-          );
+          if (state == 'running' || state == 'paused') {
+            current = SessionPreview(
+              subject: (subject == null || subject.isEmpty)
+                  ? 'Smart Session'
+                  : subject,
+              durationMinutes: durationSeconds ~/ 60,
+              planId: planId,
+            );
+          }
         }
 
-        for (var i = currentIndex; i < blocks.length; i++) {
+        for (var i = currentIndex.clamp(0, blocks.length - 1); i < blocks.length; i++) {
           final block = blocks[i] as Map<String, dynamic>;
           final blockState = (block['state'] as String?) ?? 'pending';
           final blockType = (block['type'] as String?) ?? 'study';
@@ -500,6 +521,10 @@ class InsightsService {
             );
             break;
           }
+        }
+
+        if (current != null || upcoming != null) {
+          break;
         }
       }
 

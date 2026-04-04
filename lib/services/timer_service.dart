@@ -90,8 +90,13 @@ class TimerQueueState {
       : null;
 
   /// Get remaining blocks (not including current)
-  List<ExecutingBlock> get upcomingBlocks =>
-      allBlocks.sublist(currentBlockIndex + 1);
+  List<ExecutingBlock> get upcomingBlocks {
+    final start = currentBlockIndex + 1;
+    if (start < 0 || start >= allBlocks.length) {
+      return const <ExecutingBlock>[];
+    }
+    return allBlocks.sublist(start);
+  }
 
   /// Check if plan is complete
   bool get isComplete =>
@@ -118,8 +123,10 @@ class TimerQueueState {
       'user_id': userId,
       'all_blocks': allBlocks.map((b) => b.toMap()).toList(),
       'current_block_index': currentBlockIndex,
+      'plan_status': isComplete ? 'completed' : 'active',
       'started_at': startedAt.toIso8601String(),
       'paused_at': pausedAt?.toIso8601String(),
+      'updated_at': Timestamp.fromDate(DateTime.now()),
       'completed_block_count': completedBlockCount,
       'skipped_block_count': skippedBlockCount,
     };
@@ -134,12 +141,16 @@ class TimerQueueState {
               )
               .toList()
         : <ExecutingBlock>[];
+    final rawCurrentIndex = data['current_block_index'] as int? ?? 0;
+    final safeCurrentIndex = blocks.isEmpty
+      ? 0
+      : rawCurrentIndex.clamp(0, blocks.length).toInt();
 
     return TimerQueueState(
       planId: data['plan_id'] as String,
       userId: data['user_id'] as String,
       allBlocks: blocks,
-      currentBlockIndex: data['current_block_index'] as int? ?? 0,
+      currentBlockIndex: safeCurrentIndex,
       startedAt: DateTime.parse(data['started_at'] as String),
       pausedAt: data['paused_at'] != null
           ? DateTime.parse(data['paused_at'] as String)
@@ -398,6 +409,9 @@ class TimerService {
   /// Dispose resources
   void dispose() {
     stopTimer();
+    _queueState = null;
+    _timerStartTime = null;
+    _pausedElapsed = 0;
   }
 
   /// Reset for new plan
@@ -488,6 +502,9 @@ class TimerService {
           currentBlockIndex: _queueState!.allBlocks.length,
           planStatus: 'completed',
         ),
+      );
+      unawaited(
+        _clearPersistedQueueState(_queueState!.userId, _queueState!.planId),
       );
       _planCompleteController.add(_queueState!.planId);
     }
@@ -620,6 +637,23 @@ class TimerService {
     }
   }
 
+  Future<void> _clearPersistedQueueState(String userId, String planId) async {
+    if (userId.isEmpty || planId.isEmpty) {
+      return;
+    }
+
+    try {
+      await FirebaseFirestore.instance
+          .collection('users')
+          .doc(userId)
+          .collection('timer_queue_state')
+          .doc(planId)
+          .delete();
+    } catch (e) {
+      debugPrint('Error clearing timer queue state: $e');
+    }
+  }
+
   /// Load persisted queue state
   static Future<TimerQueueState?> loadPersisted(
     String userId,
@@ -634,7 +668,30 @@ class TimerService {
           .get();
 
       if (doc.exists) {
-        return TimerQueueState.fromMap(doc.data() ?? {});
+        final data = doc.data() ?? {};
+        final planStatus = (data['plan_status'] as String?)?.toLowerCase();
+        if (planStatus == 'completed') {
+          await FirebaseFirestore.instance
+              .collection('users')
+              .doc(userId)
+              .collection('timer_queue_state')
+              .doc(planId)
+              .delete();
+          return null;
+        }
+
+        final restored = TimerQueueState.fromMap(data);
+        if (restored.isComplete) {
+          await FirebaseFirestore.instance
+              .collection('users')
+              .doc(userId)
+              .collection('timer_queue_state')
+              .doc(planId)
+              .delete();
+          return null;
+        }
+
+        return restored;
       }
     } catch (e) {
       debugPrint('Error loading timer queue state: $e');
