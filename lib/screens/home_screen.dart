@@ -328,8 +328,8 @@ class _HomeScreenState extends State<HomeScreen> {
                   },
                 ),
                 const SizedBox(height: 10),
-                Align(
-                  alignment: Alignment.centerRight,
+                SizedBox(
+                  width: double.infinity,
                   child: TextButton(
                     onPressed: () {
                       Navigator.of(context).push(
@@ -340,10 +340,10 @@ class _HomeScreenState extends State<HomeScreen> {
                     },
                     style: TextButton.styleFrom(
                       backgroundColor: _cardElevated,
-                      foregroundColor: _textSecondary,
+                      foregroundColor: _textPrimary,
                       padding: const EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 8,
+                        horizontal: 14,
+                        vertical: 12,
                       ),
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(12),
@@ -351,10 +351,10 @@ class _HomeScreenState extends State<HomeScreen> {
                     ),
                     child: Text(
                       'Plan Session',
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w500,
-                        color: _textSecondary,
+                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                        color: _textPrimary,
                       ),
                     ),
                   ),
