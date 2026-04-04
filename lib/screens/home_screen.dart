@@ -320,19 +320,44 @@ class _HomeScreenState extends State<HomeScreen> {
                     return _PrimarySessionCard(
                       currentSession: flow?.current,
                       upcomingSession: flow?.upcoming,
-                      onStartTap: () => _openPrimarySession(
+                      onTap: () => _openPrimarySession(
                         current: flow?.current,
                         upcoming: flow?.upcoming,
                       ),
-                      onPlanTap: () {
-                        Navigator.of(context).push(
-                          MaterialPageRoute(
-                            builder: (_) => const InsightsDashboardScreen(),
-                          ),
-                        );
-                      },
                     );
                   },
+                ),
+                const SizedBox(height: 10),
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: TextButton(
+                    onPressed: () {
+                      Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (_) => const InsightsDashboardScreen(),
+                        ),
+                      );
+                    },
+                    style: TextButton.styleFrom(
+                      backgroundColor: _cardElevated,
+                      foregroundColor: _textSecondary,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 8,
+                      ),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                    child: Text(
+                      'Plan Session',
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w500,
+                        color: _textSecondary,
+                      ),
+                    ),
+                  ),
                 ),
                 const SizedBox(height: 22),
                 Row(
@@ -542,14 +567,12 @@ class _HomeScreenState extends State<HomeScreen> {
 
 class _PrimarySessionCard extends StatelessWidget {
   const _PrimarySessionCard({
-    required this.onStartTap,
-    required this.onPlanTap,
+    required this.onTap,
     required this.currentSession,
     required this.upcomingSession,
   });
 
-  final VoidCallback onStartTap;
-  final VoidCallback onPlanTap;
+  final VoidCallback onTap;
   final SessionPreview? currentSession;
   final SessionPreview? upcomingSession;
 
@@ -558,7 +581,7 @@ class _PrimarySessionCard extends StatelessWidget {
     final hasCurrent = currentSession != null;
     final hasUpcoming = upcomingSession != null;
 
-    final startLabel = hasCurrent
+    final title = hasCurrent
         ? 'Continue Plan'
         : hasUpcoming
         ? 'Start Session'
@@ -572,72 +595,38 @@ class _PrimarySessionCard extends StatelessWidget {
 
     return Material(
       color: Colors.transparent,
-      child: Ink(
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(24),
-          color: _HomeScreenState._primaryBlue,
-        ),
-        child: Padding(
-          padding: const EdgeInsets.all(20),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                startLabel,
-                style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                  fontSize: 18,
-                  fontWeight: FontWeight.w600,
-                  color: Colors.white,
-                ),
-              ),
-              const SizedBox(height: 6),
-              Text(
-                subtitle,
-                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                  color: Colors.white.withValues(alpha: 0.82),
-                  fontSize: 14,
-                  fontWeight: FontWeight.w400,
-                ),
-              ),
-              const SizedBox(height: 14),
-              Row(
-                children: [
-                  Expanded(
-                    child: ElevatedButton(
-                      onPressed: onStartTap,
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.white,
-                        foregroundColor: _HomeScreenState._primaryBlue,
-                        elevation: 0,
-                        padding: const EdgeInsets.symmetric(vertical: 12),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                      ),
-                      child: Text(startLabel),
-                    ),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(24),
+        onTap: onTap,
+        child: Ink(
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(24),
+            color: _HomeScreenState._primaryBlue,
+          ),
+          child: Padding(
+            padding: const EdgeInsets.all(20),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                    fontSize: 18,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.white,
                   ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: OutlinedButton(
-                      onPressed: onPlanTap,
-                      style: OutlinedButton.styleFrom(
-                        side: const BorderSide(
-                          color: Colors.white,
-                          width: 1.2,
-                        ),
-                        foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(vertical: 12),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                      ),
-                      child: const Text('Plan Session'),
-                    ),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  subtitle,
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    color: Colors.white.withValues(alpha: 0.82),
+                    fontSize: 14,
+                    fontWeight: FontWeight.w400,
                   ),
-                ],
-              ),
-            ],
+                ),
+              ],
+            ),
           ),
         ),
       ),
